@@ -35,6 +35,12 @@ public final class ModNetwork {
                 ServerPayloadHandler::handleBuildSegment
         );
 
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_RequestUndoPayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_RequestUndoPayload.STREAM_CODEC,
+                ServerPayloadHandler::handleUndo
+        );
+
         // S2C
         registrar.playToClient(
                 S2C_SyncRoadSegmentPayload.TYPE,

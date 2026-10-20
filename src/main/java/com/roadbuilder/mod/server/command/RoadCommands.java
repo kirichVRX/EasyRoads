@@ -34,6 +34,9 @@ public final class RoadCommands {
                         .then(Commands.literal("clear")
                                 .executes(ctx -> runClear(ctx.getSource()))
                         )
+                        .then(Commands.literal("undo")
+                                .executes(ctx -> runUndo(ctx.getSource()))
+                        )
                         .then(Commands.literal("dumplitematic")
                                 .executes(ctx -> runDumpLitematic(ctx.getSource()))
                         )
@@ -91,14 +94,15 @@ public final class RoadCommands {
         Vector3d p3 = p0.add(look.x * 30, 2, look.z * 30);
 
         BezierCurve3D curve = new BezierCurve3D(p0, p1, p2, p3);
-        RoadProfile profile = RoadProfile.createDefault();
+        com.roadbuilder.mod.domain.profile.ModularRoadPreset preset = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset();
+        RoadProfile profile = RoadProfile.createDefault().withWidth(preset.getTotalWidth());
 
         RoadGraphSavedData savedData = RoadGraphSavedData.get(level);
         RoadNode startNode = new RoadNode(p0);
         RoadNode endNode = new RoadNode(p3);
 
         savedData.addRoadSegment(startNode, endNode, curve, profile);
-        RoadVoxelizer.voxelizeAndPlace(level, curve, profile);
+        RoadVoxelizer.voxelizeAndPlace(level, curve, preset);
 
         source.sendSuccess(() -> Component.literal(
                 String.format("§a[RoadBuilder] Generated test road! Length: %.1fm. Graph now has %d nodes, %d edges.",
@@ -128,5 +132,14 @@ public final class RoadCommands {
         savedData.setDirty();
         source.sendSuccess(() -> Component.literal("§6[RoadBuilder] Cleared all road graph data in this world."), true);
         return 1;
+    }
+
+    private static int runUndo(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal("Only players can execute /road undo"));
+            return 0;
+        }
+        boolean ok = com.roadbuilder.mod.server.undo.RoadUndoManager.undoLast(player);
+        return ok ? 1 : 0;
     }
 }

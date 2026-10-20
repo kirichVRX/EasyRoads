@@ -136,6 +136,8 @@ public final class EditModeManager {
             Vector3d p1 = p0.add(forward.multiply(dist / 3.0));
             Vector3d toEnd = p3.subtract(p0).normalize();
             Vector3d p2 = p3.subtract(toEnd.multiply(dist / 3.0));
+            p1 = new Vector3d(p1.x, p0.y + (p3.y - p0.y) / 3.0, p1.z);
+            p2 = new Vector3d(p2.x, p0.y + 2.0 * (p3.y - p0.y) / 3.0, p2.z);
 
             curves.add(new BezierCurve3D(p0, p1, p2, p3));
         }
@@ -305,6 +307,8 @@ public final class EditModeManager {
             Vector3d p1 = p0.add(forward.multiply(dist / 3.0));
             Vector3d toEnd = p3.subtract(p0).normalize();
             Vector3d p2 = p3.subtract(toEnd.multiply(dist / 3.0));
+            p1 = new Vector3d(p1.x, p0.y + (p3.y - p0.y) / 3.0, p1.z);
+            p2 = new Vector3d(p2.x, p0.y + 2.0 * (p3.y - p0.y) / 3.0, p2.z);
 
             BezierCurve3D curve = new BezierCurve3D(p0, p1, p2, p3);
             ClientInputHandler.sendBuildRequest(curve, startNodeId, endNodeId);

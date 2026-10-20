@@ -4,6 +4,7 @@ import com.roadbuilder.mod.core.RoadBuilderMod;
 import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
+import com.roadbuilder.mod.domain.graph.RoadNetworkGraph;
 import com.roadbuilder.mod.domain.graph.RoadNode;
 import com.roadbuilder.mod.domain.profile.RoadProfile;
 import net.minecraft.network.FriendlyByteBuf;
@@ -25,6 +26,26 @@ public record S2C_SyncFullGraphPayload(
 
     public record RoadNodeData(UUID id, Vector3d position, Vector3d tangent) {}
     public record RoadEdgeData(UUID id, UUID nodeAId, UUID nodeBId, Vector3d p0, Vector3d p1, Vector3d p2, Vector3d p3, String profileName, double width) {}
+
+    public static S2C_SyncFullGraphPayload fromGraph(RoadNetworkGraph graph) {
+        List<RoadNodeData> nodeDataList = new ArrayList<>();
+        for (RoadNode node : graph.getNodes().values()) {
+            nodeDataList.add(new RoadNodeData(
+                    node.getId(), node.getPosition(), node.getTangent()
+            ));
+        }
+
+        List<RoadEdgeData> edgeDataList = new ArrayList<>();
+        for (RoadEdge edge : graph.getEdges().values()) {
+            edgeDataList.add(new RoadEdgeData(
+                    edge.getId(), edge.getNodeAId(), edge.getNodeBId(),
+                    edge.getCurve().getP0(), edge.getCurve().getP1(), edge.getCurve().getP2(), edge.getCurve().getP3(),
+                    edge.getProfile().getName(), edge.getProfile().getWidth()
+            ));
+        }
+
+        return new S2C_SyncFullGraphPayload(nodeDataList, edgeDataList);
+    }
 
     public static final Type<S2C_SyncFullGraphPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(RoadBuilderMod.MOD_ID, "sync_full_graph"));

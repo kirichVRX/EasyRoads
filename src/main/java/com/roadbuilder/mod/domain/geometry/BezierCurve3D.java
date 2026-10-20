@@ -39,6 +39,8 @@ public final class BezierCurve3D {
 
     /**
      * Evaluates position on the curve at parameter t [0, 1].
+     * Horizontal (X, Z) follows cubic Bezier for smooth curvature,
+     * while elevation (Y) transitions linearly between p0 and p3 to prevent overshooting peaks or dips.
      */
     public Vector3d evaluate(double t) {
         double u = 1.0 - t;
@@ -47,10 +49,11 @@ public final class BezierCurve3D {
         double uuu = uu * u;
         double ttt = tt * t;
 
-        return p0.multiply(uuu)
-                .add(p1.multiply(3.0 * uu * t))
-                .add(p2.multiply(3.0 * u * tt))
-                .add(p3.multiply(ttt));
+        double x = p0.x * uuu + p1.x * (3.0 * uu * t) + p2.x * (3.0 * u * tt) + p3.x * ttt;
+        double y = p0.y + (p3.y - p0.y) * t;
+        double z = p0.z * uuu + p1.z * (3.0 * uu * t) + p2.z * (3.0 * u * tt) + p3.z * ttt;
+
+        return new Vector3d(x, y, z);
     }
 
     /**
@@ -58,10 +61,10 @@ public final class BezierCurve3D {
      */
     public Vector3d evaluateDerivative(double t) {
         double u = 1.0 - t;
-        Vector3d d0 = p1.subtract(p0).multiply(3.0 * u * u);
-        Vector3d d1 = p2.subtract(p1).multiply(6.0 * u * t);
-        Vector3d d2 = p3.subtract(p2).multiply(3.0 * t * t);
-        return d0.add(d1).add(d2);
+        double dx = (p1.x - p0.x) * (3.0 * u * u) + (p2.x - p1.x) * (6.0 * u * t) + (p3.x - p2.x) * (3.0 * t * t);
+        double dy = p3.y - p0.y;
+        double dz = (p1.z - p0.z) * (3.0 * u * u) + (p2.z - p1.z) * (6.0 * u * t) + (p3.z - p2.z) * (3.0 * t * t);
+        return new Vector3d(dx, dy, dz);
     }
 
     /**

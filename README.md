@@ -8,11 +8,19 @@
 
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-brightgreen.svg)](https://minecraft.net/)
 [![NeoForge](https://img.shields.io/badge/Modloader-NeoForge-orange.svg)](https://neoforged.net/)
+[![Status](https://img.shields.io/badge/Status-Alpha%20Testing-red.svg)](https://github.com/kirichVRX/EasyRoads)
 [![License](https://img.shields.io/badge/License-MIT%20%2F%20All%20Rights%20Reserved-blue.svg)](TEMPLATE_LICENSE.txt)
+
+> 📖 **[Перейти на русскую версию / Switch to Russian (README_RU.md)](README_RU.md)**
 
 [Features](#-features) • [Controls & Keybinds](#-controls--keybinds) • [Commands](#-commands) • [Preset Studio](#-road-preset-studio) • [Building from Source](#-building-from-source)
 
 </div>
+
+---
+
+> [!WARNING]
+> **Alpha Testing Stage**: EasyRoads is currently in active alpha testing. Some features may change, and you might encounter bugs. Please back up your worlds and report any issues on the [GitHub Issues](https://github.com/kirichVRX/EasyRoads/issues) page!
 
 ---
 

@@ -3,6 +3,7 @@
   "key.categories.roadbuilder": "Road Builder",
   "key.roadbuilder.toggle_edit_mode": "Toggle Road Edit Mode",
   "key.roadbuilder.finish_road": "Finish Multi-Point Road (Build)",
+  "key.roadbuilder.open_preset_screen": "Open Road Preset Studio",
   "roadbuilder.edit_mode.enabled": "Road Edit Mode: §aENABLED§r",
   "roadbuilder.edit_mode.disabled": "Road Edit Mode: §cDISABLED§r"
 }

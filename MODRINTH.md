@@ -2,6 +2,8 @@
 
 > **Effortless, organic, and realistic 3D road building for Minecraft.**
 
+> ⚠️ **Note: EasyRoads is currently in Alpha Testing!** Features and mechanics are actively being refined. Feel free to test and share your feedback/bug reports.
+
 Tired of building roads block-by-block? Sick of rigid 90-degree turns and awkward stairs on hills? **EasyRoads** introduces procedural 3D curve building into Minecraft, allowing you to lay down smooth highways, urban avenues, and winding countryside paths in seconds!
 
 ---

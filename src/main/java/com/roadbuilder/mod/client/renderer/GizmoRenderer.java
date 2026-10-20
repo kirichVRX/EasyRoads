@@ -9,6 +9,8 @@ import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
 import com.roadbuilder.mod.domain.graph.RoadNode;
+import com.roadbuilder.mod.domain.profile.ModularRoadPreset;
+import com.roadbuilder.mod.domain.profile.PresetManager;
 import com.roadbuilder.mod.domain.profile.RoadProfile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
@@ -77,13 +79,16 @@ public final class GizmoRenderer {
         int selectedIdx = EditModeManager.getInstance().getSelectedPointIndex();
         EditTool currentTool = EditModeManager.getInstance().getCurrentTool();
 
+        double surfaceElevation = 1.02;
+
         for (int i = 0; i < chainedPts.size(); i++) {
             Vector3d pt = chainedPts.get(i);
             boolean isSelected = (i == selectedIdx);
             double boxSize = isSelected ? 0.35 : 0.25;
+            double baseY = pt.y + surfaceElevation;
             AABB ptBox = new AABB(
-                    pt.x - boxSize, pt.y, pt.z - boxSize,
-                    pt.x + boxSize, pt.y + (isSelected ? 0.7 : 0.5), pt.z + boxSize
+                    pt.x - boxSize, baseY, pt.z - boxSize,
+                    pt.x + boxSize, baseY + (isSelected ? 0.7 : 0.5), pt.z + boxSize
             );
 
             if (isSelected) {
@@ -91,7 +96,7 @@ public final class GizmoRenderer {
                 LevelRenderer.renderLineBox(poseStack, lines, ptBox, 1.0f, 0.95f, 0.1f, 1.0f);
 
                 // Render 3D Axis Gizmo arrows (Axiom style) whenever a point is selected
-                renderAxisGizmo(poseStack, lines, pt);
+                renderAxisGizmo(poseStack, lines, pt.add(0, surfaceElevation, 0));
             } else if (i == 0) {
                 // Cyan for first point
                 LevelRenderer.renderLineBox(poseStack, lines, ptBox, 0.2f, 0.8f, 1.0f, 1.0f);
@@ -127,10 +132,10 @@ public final class GizmoRenderer {
         ClientGraphCache cache = ClientGraphCache.getInstance();
         UUID hoveredId = cache.getHoveredNodeId();
 
-        // Render Nodes
+        // Render Nodes (elevated above road surface)
         for (RoadNode node : cache.getGraph().getNodes().values()) {
             Vector3d p = node.getPosition();
-            AABB nodeBox = new AABB(p.x - 0.3, p.y - 0.1, p.z - 0.3, p.x + 0.3, p.y + 0.5, p.z + 0.3);
+            AABB nodeBox = new AABB(p.x - 0.3, p.y + 1.02, p.z - 0.3, p.x + 0.3, p.y + 1.62, p.z + 0.3);
 
             boolean isHovered = node.getId().equals(hoveredId);
             if (isHovered) {
@@ -148,32 +153,25 @@ public final class GizmoRenderer {
 
     /**
      * Renders textured translucent phantom blocks like Axiom / Litematica using Minecraft's BlockRenderDispatcher.
+     * Accurately displays the entire road, including embankments, viaduct pillars, and slopes in the in-world preview!
      */
     private static void renderTexturedPhantomBlocks(Minecraft mc, PoseStack poseStack, MultiBufferSource.BufferSource bufferSource,
                                                    BezierCurve3D curve, RoadProfile profile) {
-        List<com.roadbuilder.mod.server.voxelizer.RoadVoxelizer.Cell> cells =
-                com.roadbuilder.mod.server.voxelizer.RoadVoxelizer.planCurveCells(curve, profile);
-        if (cells.isEmpty()) return;
-
-        BlockState roadwayState = resolveBlockState(profile.getSurfaceBlockId(), Blocks.GRAY_CONCRETE_POWDER.defaultBlockState());
-        BlockState curbBlock = resolveBlockState(profile.getCurbBlockId(), Blocks.POLISHED_ANDESITE_STAIRS.defaultBlockState());
-        BlockState centerMarkingBlock = resolveBlockState(profile.getCenterMarkingBlockId(), Blocks.SMOOTH_QUARTZ_STAIRS.defaultBlockState());
-        BlockState sidewalkBlock = Blocks.STONE.defaultBlockState();
+        ModularRoadPreset preset = PresetManager.getInstance().getActivePreset();
+        java.util.Map<BlockPos, BlockState> blocksToRender = com.roadbuilder.mod.server.voxelizer.RoadVoxelizer.calculateRoadBlocks(
+                mc.level, curve, preset, ClientGraphCache.getInstance().getGraph()
+        );
+        if (blocksToRender.isEmpty()) return;
 
         BlockRenderDispatcher dispatcher = mc.getBlockRenderer();
         VertexConsumer translucentBuffer = bufferSource.getBuffer(RenderType.translucent());
 
-        for (com.roadbuilder.mod.server.voxelizer.RoadVoxelizer.Cell cell : cells) {
-            BlockState stateToRender = switch (cell.kind()) {
-                case ASPHALT -> roadwayState;
-                case LINE -> orientStairs(centerMarkingBlock, cell.facing(), Half.BOTTOM);
-                case CURB -> orientStairs(curbBlock, cell.facing(), Half.BOTTOM);
-                case SIDEWALK -> sidewalkBlock;
-            };
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : blocksToRender.entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState stateToRender = entry.getValue();
 
-            // Render translucent block quad model at (cell.x(), cell.y(), cell.z())
             poseStack.pushPose();
-            poseStack.translate(cell.x(), cell.y(), cell.z());
+            poseStack.translate(pos.getX(), pos.getY(), pos.getZ());
 
             BakedModel model = dispatcher.getBlockModel(stateToRender);
             renderModelTranslucent(model, stateToRender, poseStack, translucentBuffer, 0.65f);
@@ -232,40 +230,17 @@ public final class GizmoRenderer {
         if (length < 0.5) return;
 
         int samples = Math.max(8, (int) (length * 2.0));
-        double halfWidth = profile.getWidth() / 2.0;
-
-        Vector3d prevCenter = curve.evaluate(0.0);
-        Vector3d prevNormal = curve.evaluateNormal(0.0, Vector3d.UP);
-        Vector3d prevLeft = prevCenter.subtract(prevNormal.multiply(halfWidth));
-        Vector3d prevRight = prevCenter.add(prevNormal.multiply(halfWidth));
-
-        // Draw start crossbar
-        drawLine(poseStack, lines, prevLeft, prevRight, 1.0f, 1.0f, 0.0f, 1.0f);
+        Vector3d prevCenter = curve.evaluate(0.0).add(0, 1.02, 0);
 
         for (int i = 1; i <= samples; i++) {
             double distance = (double) i / samples * length;
             double t = curve.getArcLengthTable().getTForDistance(distance);
-            Vector3d currCenter = curve.evaluate(t);
-            Vector3d currNormal = curve.evaluateNormal(t, Vector3d.UP);
-            Vector3d currLeft = currCenter.subtract(currNormal.multiply(halfWidth));
-            Vector3d currRight = currCenter.add(currNormal.multiply(halfWidth));
+            Vector3d currCenter = curve.evaluate(t).add(0, 1.02, 0);
 
-            // Draw centerline (Cyan)
+            // Clean, elegant centerline guide (Cyan)
             drawLine(poseStack, lines, prevCenter, currCenter, 0.2f, 1.0f, 1.0f, 1.0f);
 
-            // Draw left & right boundary edges (Yellow)
-            drawLine(poseStack, lines, prevLeft, currLeft, 1.0f, 0.9f, 0.0f, 0.9f);
-            drawLine(poseStack, lines, prevRight, currRight, 1.0f, 0.9f, 0.0f, 0.9f);
-
-            // Draw crossbars every 2 meters
-            if (i % 2 == 0 || i == samples) {
-                drawLine(poseStack, lines, currLeft, currRight, 1.0f, 0.9f, 0.0f, 0.4f);
-            }
-
             prevCenter = currCenter;
-            prevNormal = currNormal;
-            prevLeft = currLeft;
-            prevRight = currRight;
         }
     }
 
@@ -273,11 +248,11 @@ public final class GizmoRenderer {
                                         float r, float g, float b, float a) {
         double length = curve.getApproximateLength();
         int samples = Math.max(6, (int) length);
-        Vector3d prev = curve.evaluate(0.0);
+        Vector3d prev = curve.evaluate(0.0).add(0, 1.02, 0);
 
         for (int i = 1; i <= samples; i++) {
             double t = (double) i / samples;
-            Vector3d curr = curve.evaluate(t);
+            Vector3d curr = curve.evaluate(t).add(0, 1.02, 0);
             drawLine(poseStack, lines, prev, curr, r, g, b, a);
             prev = curr;
         }

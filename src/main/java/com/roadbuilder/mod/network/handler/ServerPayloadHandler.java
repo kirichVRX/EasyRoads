@@ -10,15 +10,19 @@ import com.roadbuilder.mod.network.payload.S2C_SyncFullGraphPayload;
 import com.roadbuilder.mod.network.payload.S2C_SyncRoadSegmentPayload;
 import com.roadbuilder.mod.server.storage.RoadGraphSavedData;
 import com.roadbuilder.mod.server.voxelizer.RoadVoxelizer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -66,8 +70,13 @@ public final class ServerPayloadHandler {
                 endNode = new RoadNode(endId, payload.p3(), curve.evaluateTangent(1.0));
             }
 
-            // Select profile
-            RoadProfile profile = RoadProfile.createDefault();
+            // Select preset
+            com.roadbuilder.mod.domain.profile.ModularRoadPreset preset = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getAllPresets().stream()
+                    .filter(p -> p.getId().equals(payload.profileName()))
+                    .findFirst()
+                    .orElse(com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset());
+
+            RoadProfile profile = RoadProfile.createDefault().withWidth(preset.getTotalWidth());
 
             // 1. Save road segment to World Graph NBT
             savedData.addRoadSegment(startNode, endNode, curve, profile);
@@ -81,8 +90,18 @@ public final class ServerPayloadHandler {
                 }
             }
 
-            // 2. Voxelize and place blocks in world
-            RoadVoxelizer.voxelizeAndPlace(level, curve, profile);
+            // 2. Voxelize and place blocks in world using modular preset, snapshotting for undo
+            Map<BlockPos, BlockState> blocksToSet = RoadVoxelizer.calculateRoadBlocks(level, curve, preset);
+            Map<BlockPos, BlockState> previousBlocks = new HashMap<>();
+            for (BlockPos pos : blocksToSet.keySet()) {
+                previousBlocks.put(pos, level.getBlockState(pos));
+            }
+            for (Map.Entry<BlockPos, BlockState> entry : blocksToSet.entrySet()) {
+                level.setBlock(entry.getKey(), entry.getValue(), net.minecraft.world.level.block.Block.UPDATE_ALL);
+            }
+            com.roadbuilder.mod.server.undo.RoadUndoManager.recordPlacement(
+                    serverPlayer.getUUID(), edgeId, startNode.getId(), endNode.getId(), previousBlocks
+            );
 
             // 3. Phase 5: Broadcast newly created segment to all players in dimension
             S2C_SyncRoadSegmentPayload syncPayload = new S2C_SyncRoadSegmentPayload(
@@ -90,14 +109,22 @@ public final class ServerPayloadHandler {
                     endNode.getId(), endNode.getPosition(), endNode.getTangent(),
                     edgeId,
                     curve.getP0(), curve.getP1(), curve.getP2(), curve.getP3(),
-                    profile.getName(), profile.getWidth()
+                    preset.getName(), preset.getTotalWidth()
             );
             PacketDistributor.sendToPlayersInDimension(level, syncPayload);
 
             serverPlayer.sendSystemMessage(Component.literal(String.format(
-                    "§a[RoadBuilder] Successfully built road segment (length: %.1fm)!",
+                    "§a[RoadBuilder] Successfully built road segment (length: %.1fm)! §7(Ctrl+Z для отмены)",
                     curve.getApproximateLength()
             )));
+        });
+    }
+
+    public static void handleUndo(com.roadbuilder.mod.network.payload.C2S_RequestUndoPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer) {
+                com.roadbuilder.mod.server.undo.RoadUndoManager.undoLast(serverPlayer);
+            }
         });
     }
 

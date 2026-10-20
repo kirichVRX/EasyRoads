@@ -94,7 +94,7 @@ public final class RoadEditorOverlay {
 
         // Chain point counter & shortcuts guide on the side
         int count = manager.getChainedPoints().size();
-        String counterText = "§aТочек: §f" + count + " §7| §eENTER§7: Построить | §cПКМ§7: Сброс";
+        String counterText = "§aТочек: §f" + count + " §7| §eENTER§7: Построить | §cПКМ§7: Сброс | §bCtrl+Z§7: Отмена";
         int counterWidth = mc.font.width(counterText);
         int counterX = (screenWidth - counterWidth) / 2;
         guiGraphics.drawString(mc.font, counterText, counterX, startY + slotHeight + 22, 0xFFD8DEE9, true);

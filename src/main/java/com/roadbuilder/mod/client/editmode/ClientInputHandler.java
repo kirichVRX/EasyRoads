@@ -30,6 +30,13 @@ public final class ClientInputHandler {
             EditModeManager.getInstance().toggleEditMode();
         }
 
+        // Handle Caps Lock Open Preset Studio Screen (only when Edit Mode is active!)
+        while (ModKeyMappings.OPEN_PRESET_SCREEN.consumeClick()) {
+            if (EditModeManager.getInstance().isEditModeActive()) {
+                mc.setScreen(new com.roadbuilder.mod.client.gui.RoadPresetStudioScreen());
+            }
+        }
+
         // Handle ENTER to finish multi-point road chain
         while (ModKeyMappings.FINISH_ROAD.consumeClick()) {
             if (EditModeManager.getInstance().isEditModeActive()) {
@@ -60,6 +67,11 @@ public final class ClientInputHandler {
         }
 
         int key = event.getKey();
+        if (key == GLFW.GLFW_KEY_Z && (event.getModifiers() & GLFW.GLFW_MOD_CONTROL) != 0) {
+            net.neoforged.neoforge.network.PacketDistributor.sendToServer(new com.roadbuilder.mod.network.payload.C2S_RequestUndoPayload());
+            return;
+        }
+
         if (key == GLFW.GLFW_KEY_1) {
             EditModeManager.getInstance().setCurrentTool(EditTool.ADD_POINT);
         } else if (key == GLFW.GLFW_KEY_2) {
@@ -171,6 +183,7 @@ public final class ClientInputHandler {
     }
 
     public static void sendBuildRequest(BezierCurve3D curve, UUID startNodeId, UUID endNodeId) {
+        String activePresetId = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset().getId();
         C2S_RequestBuildSegmentPayload payload = new C2S_RequestBuildSegmentPayload(
                 curve.getP0(),
                 curve.getP1(),
@@ -178,7 +191,7 @@ public final class ClientInputHandler {
                 curve.getP3(),
                 Optional.ofNullable(startNodeId),
                 Optional.ofNullable(endNodeId),
-                "Standard City Avenue"
+                activePresetId
         );
 
         PacketDistributor.sendToServer(payload);

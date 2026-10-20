@@ -124,6 +124,32 @@ public final class RoadProfile {
         );
     }
 
+    public RoadProfile withWidth(double newWidth) {
+        return new RoadProfile(
+                name,
+                newWidth,
+                surfaceBlockId,
+                foundationBlockId,
+                hasCurbs,
+                curbBlockId,
+                curbWidth,
+                clearanceHeight,
+                hasSidewalks,
+                sidewalkWidth,
+                sidewalkBlockIds,
+                hasCenterMarking,
+                centerMarkingBlockId,
+                dashLength,
+                gapLength,
+                createPillars,
+                pillarBlockId,
+                pillarSpacing,
+                createTunnels,
+                tunnelWallBlockId,
+                tunnelCeilingHeight
+        );
+    }
+
     public static RoadProfile createHighway() {
         return new RoadProfile(
                 "Highway",

@@ -24,8 +24,15 @@ public final class ModKeyMappings {
             "key.categories.roadbuilder"
     );
 
+    public static final KeyMapping OPEN_PRESET_SCREEN = new KeyMapping(
+            "key.roadbuilder.open_preset_screen",
+            InputConstants.KEY_CAPSLOCK,
+            "key.categories.roadbuilder"
+    );
+
     public static void register(RegisterKeyMappingsEvent event) {
         event.register(TOGGLE_EDIT_MODE);
         event.register(FINISH_ROAD);
+        event.register(OPEN_PRESET_SCREEN);
     }
 }
