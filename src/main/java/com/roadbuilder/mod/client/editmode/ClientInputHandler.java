@@ -175,7 +175,7 @@ public final class ClientInputHandler {
             if (!EditModeManager.getInstance().getChainedPoints().isEmpty()) {
                 EditModeManager.getInstance().cancelCurrentOperation();
                 if (mc.player != null) {
-                    mc.player.displayClientMessage(net.minecraft.network.chat.Component.literal("§c[RoadBuilder] Строительство отменено."), true);
+                    mc.player.displayClientMessage(net.minecraft.network.chat.Component.translatable("roadbuilder.message.construction_canceled"), true);
                 }
                 event.setCanceled(true);
             }

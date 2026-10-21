@@ -51,7 +51,8 @@ public final class RoadVoxelizer {
         }
     }
 
-    private record SideCandidate(int bx, int bz, int roadY, double dz, double t, double outX, double outZ) {}
+    private record SideCandidate(int bx, int bz, int roadY, double dz, double t, double outX, double outZ, boolean isEndCap) {}
+    private record RoadIntersection(Vector3d center, Vector3d t1, Vector3d n1, double hRoadway1, Vector3d t2, Vector3d n2, double hRoadway2) {}
 
     private static final double EPS = 1e-9;
 
@@ -104,22 +105,115 @@ public final class RoadVoxelizer {
         Map<Long, Integer> lowerRoadSurfaceY = new HashMap<>();
         Set<Long> lowerRoadClearanceZone = new HashSet<>();
         List<Double> lowerCrossingT = new ArrayList<>();
+        Map<Long, Integer> groundYMap = new HashMap<>();
+        List<RoadIntersection> intersections = new ArrayList<>();
+        double hRoadway1 = preset.getRoadwayWidth() / 2.0;
+        boolean p0Connected = false;
+        boolean p3Connected = false;
+        boolean p0ConnectsToViaduct = false;
+        boolean p3ConnectsToViaduct = false;
 
         if (graph != null) {
+            int edgesAtP0 = 0;
+            int edgesAtP3 = 0;
+            for (RoadEdge edge : graph.getEdges().values()) {
+                if (edge.getCurve().equals(curve)) continue;
+                if (edge.getCurve().getP0().distanceTo(curve.getP0()) < 1.0 || edge.getCurve().getP3().distanceTo(curve.getP0()) < 1.0) {
+                    edgesAtP0++;
+                }
+                if (edge.getCurve().getP0().distanceTo(curve.getP3()) < 1.0 || edge.getCurve().getP3().distanceTo(curve.getP3()) < 1.0) {
+                    edgesAtP3++;
+                }
+            }
+
             for (RoadEdge edge : graph.getEdges().values()) {
                 if (edge.getCurve().equals(curve)) continue;
 
-                double dist = edge.getCurve().getP0().distanceTo(curve.getP0());
-                if (dist > 300.0) continue;
+                double distP0toP0 = edge.getCurve().getP0().distanceTo(curve.getP0());
+                double distP0toP3 = edge.getCurve().getP3().distanceTo(curve.getP0());
+                boolean sharesP0 = distP0toP0 < 1.0 || distP0toP3 < 1.0;
+                if (sharesP0) {
+                    p0Connected = true;
+                }
 
-                boolean sharesP0 = edge.getCurve().getP0().distanceTo(curve.getP0()) < 1.0 || edge.getCurve().getP3().distanceTo(curve.getP0()) < 1.0;
-                boolean sharesP3 = edge.getCurve().getP0().distanceTo(curve.getP3()) < 1.0 || edge.getCurve().getP3().distanceTo(curve.getP3()) < 1.0;
-                boolean isContinuation = sharesP0 || sharesP3;
+                double distP3toP0 = edge.getCurve().getP0().distanceTo(curve.getP3());
+                double distP3toP3 = edge.getCurve().getP3().distanceTo(curve.getP3());
+                boolean sharesP3 = distP3toP0 < 1.0 || distP3toP3 < 1.0;
+                if (sharesP3) {
+                    p3Connected = true;
+                }
+
+                double dist = edge.getCurve().getP0().distanceTo(curve.getP0());
+                if (dist > 300.0 && !sharesP0 && !sharesP3) continue;
 
                 ModularRoadPreset otherPreset = PresetManager.getInstance().getAllPresets().stream()
                         .filter(p -> p.getId().equals(edge.getProfile().getName()) || p.getName().equals(edge.getProfile().getName()))
                         .findFirst()
                         .orElse(preset);
+
+                double hRoadway2 = otherPreset.getRoadwayWidth() / 2.0;
+
+                boolean isContinuationP0 = false;
+                if (sharesP0) {
+                    Vector3d vCurve = curve.evaluateTangent(0.0);
+                    Vector3d vOther = (distP0toP0 < 1.0) ? edge.getCurve().evaluateTangent(0.0) : edge.getCurve().evaluateTangent(1.0).multiply(-1.0);
+                    double lC = Math.hypot(vCurve.x, vCurve.z);
+                    double lO = Math.hypot(vOther.x, vOther.z);
+                    double dot = (lC > 1e-6 && lO > 1e-6) ? (vCurve.x * vOther.x + vCurve.z * vOther.z) / (lC * lO) : -1.0;
+                    // Deflection angle <= 20 degrees means dot <= -cos(20 deg) ~ -0.93969; must also be 2 segments only (not 3+ way junction)
+                    if (dot <= -0.93969 && edgesAtP0 == 1) {
+                        isContinuationP0 = true;
+                    } else {
+                        Vector3d t1 = (lC > 1e-6) ? new Vector3d(vCurve.x / lC, 0, vCurve.z / lC) : new Vector3d(0, 0, 1);
+                        Vector3d n1 = new Vector3d(-t1.z, 0, t1.x);
+                        Vector3d t2 = (lO > 1e-6) ? new Vector3d(vOther.x / lO, 0, vOther.z / lO) : new Vector3d(1, 0, 0);
+                        Vector3d n2 = new Vector3d(-t2.z, 0, t2.x);
+                        intersections.add(new RoadIntersection(curve.getP0(), t1, n1, hRoadway1, t2, n2, hRoadway2));
+                    }
+                }
+
+                boolean isContinuationP3 = false;
+                if (sharesP3) {
+                    Vector3d vCurve = curve.evaluateTangent(1.0).multiply(-1.0);
+                    Vector3d vOther = (distP3toP0 < 1.0) ? edge.getCurve().evaluateTangent(0.0) : edge.getCurve().evaluateTangent(1.0).multiply(-1.0);
+                    double lC = Math.hypot(vCurve.x, vCurve.z);
+                    double lO = Math.hypot(vOther.x, vOther.z);
+                    double dot = (lC > 1e-6 && lO > 1e-6) ? (vCurve.x * vOther.x + vCurve.z * vOther.z) / (lC * lO) : -1.0;
+                    if (dot <= -0.93969 && edgesAtP3 == 1) {
+                        isContinuationP3 = true;
+                    } else {
+                        Vector3d t1 = (lC > 1e-6) ? new Vector3d(vCurve.x / lC, 0, vCurve.z / lC) : new Vector3d(0, 0, 1);
+                        Vector3d n1 = new Vector3d(-t1.z, 0, t1.x);
+                        Vector3d t2 = (lO > 1e-6) ? new Vector3d(vOther.x / lO, 0, vOther.z / lO) : new Vector3d(1, 0, 0);
+                        Vector3d n2 = new Vector3d(-t2.z, 0, t2.x);
+                        intersections.add(new RoadIntersection(curve.getP3(), t1, n1, hRoadway1, t2, n2, hRoadway2));
+                    }
+                }
+
+                boolean isContinuation = (sharesP0 && isContinuationP0) || (sharesP3 && isContinuationP3);
+
+                if (sharesP0 && otherPreset.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                    Vector3d connPt = curve.getP0();
+                    int gY = groundYMap.computeIfAbsent(coordKey((int) Math.round(connPt.x), (int) Math.round(connPt.z)),
+                            k -> getTrueGroundY(level, (int) Math.round(connPt.x), (int) Math.round(connPt.z)));
+                    int oceanFloorY = level.getHeight(Heightmap.Types.OCEAN_FLOOR, (int) Math.round(connPt.x), (int) Math.round(connPt.z));
+                    boolean overWater = gY > oceanFloorY || !level.getFluidState(new BlockPos((int) Math.round(connPt.x), gY, (int) Math.round(connPt.z))).isEmpty();
+                    boolean isElevated = (Math.round(connPt.y) - gY) >= 6;
+                    if (otherPreset.getViaductMode() == ModularRoadPreset.Mode.ALWAYS || overWater || isElevated) {
+                        p0ConnectsToViaduct = true;
+                    }
+                }
+                if (sharesP3 && otherPreset.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                    Vector3d connPt = curve.getP3();
+                    int gY = groundYMap.computeIfAbsent(coordKey((int) Math.round(connPt.x), (int) Math.round(connPt.z)),
+                            k -> getTrueGroundY(level, (int) Math.round(connPt.x), (int) Math.round(connPt.z)));
+                    int oceanFloorY = level.getHeight(Heightmap.Types.OCEAN_FLOOR, (int) Math.round(connPt.x), (int) Math.round(connPt.z));
+                    boolean overWater = gY > oceanFloorY || !level.getFluidState(new BlockPos((int) Math.round(connPt.x), gY, (int) Math.round(connPt.z))).isEmpty();
+                    boolean isElevated = (Math.round(connPt.y) - gY) >= 6;
+                    if (otherPreset.getViaductMode() == ModularRoadPreset.Mode.ALWAYS || overWater || isElevated) {
+                        p3ConnectsToViaduct = true;
+                    }
+                }
 
                 List<Cell> theirCells = planCurveCells(edge.getCurve(), otherPreset);
                 for (Cell c : theirCells) {
@@ -159,19 +253,46 @@ public final class RoadVoxelizer {
                 }
             }
 
-            if (intersectingOther == null) {
-                finalCells.add(c);
-            } else {
-                Cell resolved = resolveWinner(c, intersectingOther);
-                if (!continuationCellKeys.contains(key)) {
-                    if (resolved.kind() == Kind.LINE || resolved.kind() == Kind.SIDEWALK || resolved.kind() == Kind.CURB || resolved.kind() == Kind.GRASS) {
-                        if (otherRoadwayKeys.contains(key) || c.kind() == Kind.ASPHALT) {
-                            resolved = new Cell(resolved.x(), resolved.z(), resolved.y(), Kind.ASPHALT, resolved.facing(), null, resolved.localX(), resolved.t(), resolved.nx(), resolved.nz());
-                        }
+            Cell resolved = (intersectingOther == null) ? c : resolveWinner(c, intersectingOther);
+
+            // Проверяем, находится ли клетка внутри зоны проезжей части перекрестка (OBB)
+            boolean inIntersectionRoadway = false;
+            for (RoadIntersection inter : intersections) {
+                double dx = c.x() - inter.center.x;
+                double dz = c.z() - inter.center.z;
+                double u_1 = Math.abs(dx * inter.t1.x + dz * inter.t1.z);
+                double v_1 = Math.abs(dx * inter.n1.x + dz * inter.n1.z);
+                double u_2 = Math.abs(dx * inter.t2.x + dz * inter.t2.z);
+                double v_2 = Math.abs(dx * inter.n2.x + dz * inter.n2.z);
+
+                if (u_1 <= inter.hRoadway2 + 0.5 && v_1 <= inter.hRoadway1 + 0.2) {
+                    inIntersectionRoadway = true;
+                    break;
+                } else if (u_2 <= inter.hRoadway1 + 0.5 && v_2 <= inter.hRoadway2 + 0.2) {
+                    inIntersectionRoadway = true;
+                    break;
+                }
+            }
+
+            if (inIntersectionRoadway) {
+                // В зоне проезжей части перекрестка:
+                // Газоны-разделители, центральные бордюры и линии разметки превращаются в чистый асфальт!
+                if (resolved.kind() == Kind.LINE || 
+                    resolved.kind() == Kind.CURB || 
+                    resolved.kind() == Kind.GRASS) {
+                    resolved = new Cell(resolved.x(), resolved.z(), resolved.y(), 
+                                        Kind.ASPHALT, resolved.facing(), null, 
+                                        resolved.localX(), resolved.t(), resolved.nx(), resolved.nz());
+                }
+            } else if (intersectingOther != null && !continuationCellKeys.contains(key)) {
+                if (resolved.kind() == Kind.LINE || resolved.kind() == Kind.SIDEWALK || resolved.kind() == Kind.CURB || resolved.kind() == Kind.GRASS) {
+                    if (otherRoadwayKeys.contains(key) || c.kind() == Kind.ASPHALT) {
+                        resolved = new Cell(resolved.x(), resolved.z(), resolved.y(), Kind.ASPHALT, resolved.facing(), null, resolved.localX(), resolved.t(), resolved.nx(), resolved.nz());
                     }
                 }
-                finalCells.add(resolved);
             }
+
+            finalCells.add(resolved);
         }
 
         // 4. Block state definitions
@@ -193,9 +314,13 @@ public final class RoadVoxelizer {
         for (Cell c : finalCells) {
             roadDeckColumns.add(coordKey(c.x(), c.z()));
         }
+        for (List<Cell> cells : otherRoadCells.values()) {
+            for (Cell c : cells) {
+                roadDeckColumns.add(coordKey(c.x(), c.z()));
+            }
+        }
 
         // Pre-determine ground height and viaduct state per column with debouncing & overpass preservation
-        Map<Long, Integer> groundYMap = new HashMap<>();
         Map<Long, Boolean> viaductActiveMap = new HashMap<>();
 
         double totalCurveLen = curve.getApproximateLength();
@@ -246,6 +371,22 @@ public final class RoadVoxelizer {
             }
         }
 
+        // Precalculate distance along road to the nearest viaduct station (used for smooth 45° taper approaching viaduct)
+        double[] distToViaduct = new double[totalStations];
+        for (int s = 0; s < totalStations; s++) {
+            if (viaductStations[s]) {
+                distToViaduct[s] = 0.0;
+            } else {
+                double minD = Double.MAX_VALUE;
+                for (int v = 0; v < totalStations; v++) {
+                    if (viaductStations[v]) {
+                        minD = Math.min(minD, Math.abs(s - v));
+                    }
+                }
+                distToViaduct[s] = minD;
+            }
+        }
+
         for (Cell cell : finalCells) {
             long key = coordKey(cell.x(), cell.z());
             int stIdx = (int) Math.max(0, Math.min(totalStations - 1, Math.round(cell.t())));
@@ -269,8 +410,13 @@ public final class RoadVoxelizer {
                     case GRASS -> grassState;
                     case STONE -> foundationState;
                     case SIDEWALK -> {
-                        int hash = Math.abs((cell.x() * 312987 ^ cell.z() * 116129 ^ cell.y() * 8461));
-                        yield SIDEWALK_MIX[hash % SIDEWALK_MIX.length];
+                        // 64-битный SplitMix64 хеш-миксер для равномерного белого шума без полос (Bug 11)
+                        long h = ((long) cell.x() * 0x9E3779B97F4A7C15L) ^ ((long) cell.z() * 0xBF58476D1CE4E5B9L) ^ ((long) cell.y() * 0x94D049BB133111EBL);
+                        h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
+                        h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
+                        h = h ^ (h >>> 31);
+                        int idx = (int) Math.floorMod(h, (long) SIDEWALK_MIX.length);
+                        yield SIDEWALK_MIX[idx];
                     }
                 };
             }
@@ -299,31 +445,61 @@ public final class RoadVoxelizer {
             }
 
             boolean isMountain = false;
+            int worldSurfaceAtRoad = level.getHeight(Heightmap.Types.WORLD_SURFACE, cell.x(), cell.z());
+            int terrainOverhead = worldSurfaceAtRoad - cell.y();
+
             if (!roadAbove) {
                 int solidCount = 0;
-                for (int dy = 6; dy <= 9; dy++) {
+                for (int dy = 6; dy <= 10; dy++) {
                     BlockState checkState = level.getBlockState(surfacePos.above(dy));
                     if (!checkState.isAir() && !checkState.is(BlockTags.LEAVES) && !checkState.is(BlockTags.LOGS) && checkState.isSolid()) {
                         solidCount++;
                     }
                 }
-                if (solidCount >= 3) {
+                // Туннель активируется только если над дорогой есть полноценный массив горы толщиной >= 3 блоков
+                if (solidCount >= 3 && terrainOverhead >= 7) {
                     isMountain = true;
                 }
             }
 
             boolean isTunnelSection = tunnelEnabled && (preset.getTunnelMode() == ModularRoadPreset.Mode.ALWAYS || isMountain);
 
-            // Clear air space above road
-            for (int h = 1; h <= maxClearanceH; h++) {
-                blockMap.put(surfacePos.above(h), airState);
-            }
+            // Расчет арочного свода туннеля (Bug 8)
+            double halfW = Math.max(1.0, (totalWidth - 1) / 2.0);
+            double uNorm = (cell.localX() - halfW) / halfW;
+            uNorm = Math.max(-1.0, Math.min(1.0, uNorm));
+            int archHeight = (int) Math.round(6.0 - 2.0 * (uNorm * uNorm)); // 6 в центре, 4 по краям
 
-            // Tunnel walls and ceiling
-            if (isTunnelSection) {
-                blockMap.put(surfacePos.above(maxClearanceH + 1), foundationState);
-                if (cell.localX() <= 1 || cell.localX() >= totalWidth - 2) {
-                    for (int h = 1; h <= maxClearanceH + 1; h++) {
+            if (roadAbove) {
+                // Если сверху проходит другая эстакада/дорога
+                for (int h = 1; h <= maxClearanceH; h++) {
+                    blockMap.put(surfacePos.above(h), airState);
+                }
+            } else if (isTunnelSection) {
+                // Внутри туннеля: очищаем воздух под арочным сводом
+                for (int h = 1; h <= archHeight; h++) {
+                    blockMap.put(surfacePos.above(h), airState);
+                }
+                // Каменный свод туннеля толщиной в 2 блока
+                blockMap.put(surfacePos.above(archHeight + 1), foundationState);
+                blockMap.put(surfacePos.above(archHeight + 2), foundationState);
+
+                // Вертикальные боковые стены туннеля
+                if (cell.localX() == 0 || cell.localX() == totalWidth - 1) {
+                    for (int h = 1; h <= archHeight; h++) {
+                        blockMap.put(surfacePos.above(h), foundationState);
+                    }
+                }
+            } else {
+                // Открытый участок или въездная выемка в склоне (open-cut)
+                // Очищаем воздух до поверхности земли + 2 блока, устраняя нависающий дерн
+                int clearH = Math.max(maxClearanceH, terrainOverhead + 2);
+                for (int h = 1; h <= clearH; h++) {
+                    blockMap.put(surfacePos.above(h), airState);
+                }
+                // Подпорная стенка при глубокой врезке в склон на открытом воздухе
+                if (terrainOverhead >= 2 && (cell.localX() == 0 || cell.localX() == totalWidth - 1)) {
+                    for (int h = 1; h <= terrainOverhead; h++) {
                         blockMap.put(surfacePos.above(h), foundationState);
                     }
                 }
@@ -400,9 +576,11 @@ public final class RoadVoxelizer {
                 }
             }
 
-            // Embankment foundation under the road deck (strictly forbidden over lower roads)
+            // Embankment foundation under the road deck (strictly forbidden over lower roads or in water)
             if (!viaductActive && !isTunnelSection && !isOverLowerRoadCell) {
-                if (cell.y() - 1 > terrainSurfaceY) {
+                BlockPos tp = new BlockPos(cell.x(), terrainSurfaceY, cell.z());
+                boolean isWater = !level.getFluidState(tp).isEmpty() || level.getBlockState(tp).is(Blocks.WATER);
+                if (!isWater && cell.y() - 1 > terrainSurfaceY) {
                     for (int ey = cell.y() - 2; ey >= terrainSurfaceY; ey--) {
                         BlockPos fp = new BlockPos(cell.x(), ey, cell.z());
                         blockMap.put(fp, dirtState);
@@ -418,9 +596,13 @@ public final class RoadVoxelizer {
                 }
             }
 
-            // Bridge Abutment (Устой моста) and Road Endings
-            boolean isAbutmentOrEnd = (cell.t() < 1.0 || cell.t() > totalCurveLen - 1.0);
-            if (!isAbutmentOrEnd) {
+            // Bridge Abutment (Устой моста) and Road Endings - 1-2 block reinforcement under deck, zero monolithic walls to ground
+            boolean isAbutmentOrEnd = false;
+            if (cell.t() < 1.0 && !p0Connected) {
+                isAbutmentOrEnd = true;
+            } else if (cell.t() > totalCurveLen - 1.0 && !p3Connected) {
+                isAbutmentOrEnd = true;
+            } else {
                 int stIdx = (int) Math.max(0, Math.min(totalStations - 1, Math.round(cell.t())));
                 boolean prevV = (stIdx > 0) && viaductStations[stIdx - 1];
                 boolean nextV = (stIdx < totalStations - 1) && viaductStations[stIdx + 1];
@@ -430,7 +612,8 @@ public final class RoadVoxelizer {
             }
 
             if (isAbutmentOrEnd && !isTunnelSection && !isOverLowerRoadCell && cell.y() - 1 > terrainSurfaceY) {
-                for (int ey = cell.y() - 1; ey >= terrainSurfaceY; ey--) {
+                int minReinforceY = Math.max(terrainSurfaceY, cell.y() - 2);
+                for (int ey = cell.y() - 1; ey >= minReinforceY; ey--) {
                     BlockPos ap = new BlockPos(cell.x(), ey, cell.z());
                     blockMap.put(ap, foundationState);
                 }
@@ -473,47 +656,86 @@ public final class RoadVoxelizer {
 
                         SideCandidate ex = sideCandidates.get(k);
                         if (ex == null || d < ex.dz()) {
-                            sideCandidates.put(k, new SideCandidate(bx, bz, roadY, d, s, outX, outZ));
+                            sideCandidates.put(k, new SideCandidate(bx, bz, roadY, d, s, outX, outZ, false));
                         }
                     }
                 }
             }
 
-            // B. Conical taper wrap around curve start and end abutments
+            // B. Solid Grid Scan for end-cap rounding at P0 and P3 (zero holes, zero ray-stepping artifacts)
+            boolean shouldRoundP0 = (!p0Connected || p0ConnectsToViaduct) && !viaductStations[0];
+            boolean shouldRoundP3 = (!p3Connected || p3ConnectsToViaduct) && !viaductStations[totalStations - 1];
+
             Vector3d p0 = curve.getP0();
-            Vector3d tan0 = curve.evaluateTangent(0.0).multiply(-1.0); // backward
-            Vector3d norm0 = curve.evaluateNormal(0.0, Vector3d.UP);
+            Vector3d tan0 = curve.evaluateTangent(0.0);
+            double t0Len = Math.hypot(tan0.x, tan0.z);
+            double t0x = (t0Len > 1e-6) ? (tan0.x / t0Len) : 0.0;
+            double t0z = (t0Len > 1e-6) ? (tan0.z / t0Len) : 1.0;
             int roadY0 = (int) Math.round(p0.y);
-            for (double angle = -90.0; angle <= 90.0; angle += 6.0) {
-                double rad = Math.toRadians(angle);
-                double dirX = tan0.x * Math.cos(rad) + norm0.x * Math.sin(rad);
-                double dirZ = tan0.z * Math.cos(rad) + norm0.z * Math.sin(rad);
-                for (double d = 0.5; d <= maxRadius; d += 0.5) {
-                    int bx = (int) Math.round(p0.x + dirX * (halfW + d));
-                    int bz = (int) Math.round(p0.z + dirZ * (halfW + d));
-                    long k = coordKey(bx, bz);
-                    SideCandidate ex = sideCandidates.get(k);
-                    if (ex == null || d < ex.dz()) {
-                        sideCandidates.put(k, new SideCandidate(bx, bz, roadY0, d, 0.0, dirX, dirZ));
+
+            if (shouldRoundP0) {
+                double Rmax = halfW + maxRadius;
+                int minX = (int) Math.floor(p0.x - Rmax);
+                int maxX = (int) Math.ceil(p0.x + Rmax);
+                int minZ = (int) Math.floor(p0.z - Rmax);
+                int maxZ = (int) Math.ceil(p0.z + Rmax);
+
+                for (int bx = minX; bx <= maxX; bx++) {
+                    for (int bz = minZ; bz <= maxZ; bz++) {
+                        double dx = bx - p0.x;
+                        double dz = bz - p0.z;
+                        // Half-space check: block is behind P0 (in direction of -T0)
+                        double projBack = dx * (-t0x) + dz * (-t0z);
+                        if (projBack < -0.01) continue;
+
+                        double R = Math.hypot(dx, dz);
+                        if (R > halfW && R <= Rmax) {
+                            double d = R - halfW;
+                            double dirX = (R > 1e-6) ? (dx / R) : -t0x;
+                            double dirZ = (R > 1e-6) ? (dz / R) : -t0z;
+                            long k = coordKey(bx, bz);
+                            SideCandidate ex = sideCandidates.get(k);
+                            if (ex == null || d < ex.dz()) {
+                                sideCandidates.put(k, new SideCandidate(bx, bz, roadY0, d, 0.0, dirX, dirZ, true));
+                            }
+                        }
                     }
                 }
             }
 
             Vector3d p3 = curve.getP3();
-            Vector3d tan3 = curve.evaluateTangent(1.0); // forward
-            Vector3d norm3 = curve.evaluateNormal(1.0, Vector3d.UP);
+            Vector3d tan3 = curve.evaluateTangent(1.0);
+            double t3Len = Math.hypot(tan3.x, tan3.z);
+            double t3x = (t3Len > 1e-6) ? (tan3.x / t3Len) : 0.0;
+            double t3z = (t3Len > 1e-6) ? (tan3.z / t3Len) : 1.0;
             int roadY3 = (int) Math.round(p3.y);
-            for (double angle = -90.0; angle <= 90.0; angle += 6.0) {
-                double rad = Math.toRadians(angle);
-                double dirX = tan3.x * Math.cos(rad) + norm3.x * Math.sin(rad);
-                double dirZ = tan3.z * Math.cos(rad) + norm3.z * Math.sin(rad);
-                for (double d = 0.5; d <= maxRadius; d += 0.5) {
-                    int bx = (int) Math.round(p3.x + dirX * (halfW + d));
-                    int bz = (int) Math.round(p3.z + dirZ * (halfW + d));
-                    long k = coordKey(bx, bz);
-                    SideCandidate ex = sideCandidates.get(k);
-                    if (ex == null || d < ex.dz()) {
-                        sideCandidates.put(k, new SideCandidate(bx, bz, roadY3, d, totalCurveLen, dirX, dirZ));
+
+            if (shouldRoundP3) {
+                double Rmax = halfW + maxRadius;
+                int minX = (int) Math.floor(p3.x - Rmax);
+                int maxX = (int) Math.ceil(p3.x + Rmax);
+                int minZ = (int) Math.floor(p3.z - Rmax);
+                int maxZ = (int) Math.ceil(p3.z + Rmax);
+
+                for (int bx = minX; bx <= maxX; bx++) {
+                    for (int bz = minZ; bz <= maxZ; bz++) {
+                        double dx = bx - p3.x;
+                        double dz = bz - p3.z;
+                        // Half-space check: block is ahead of P3 (in direction of +T3)
+                        double projFwd = dx * t3x + dz * t3z;
+                        if (projFwd < -0.01) continue;
+
+                        double R = Math.hypot(dx, dz);
+                        if (R > halfW && R <= Rmax) {
+                            double d = R - halfW;
+                            double dirX = (R > 1e-6) ? (dx / R) : t3x;
+                            double dirZ = (R > 1e-6) ? (dz / R) : t3z;
+                            long k = coordKey(bx, bz);
+                            SideCandidate ex = sideCandidates.get(k);
+                            if (ex == null || d < ex.dz()) {
+                                sideCandidates.put(k, new SideCandidate(bx, bz, roadY3, d, totalCurveLen, dirX, dirZ, true));
+                            }
+                        }
                     }
                 }
             }
@@ -531,31 +753,73 @@ public final class RoadVoxelizer {
                 int roadY = cand.roadY();
                 double dz = cand.dz();
 
+                // Smooth 45° taper approaching viaduct: drop topY by 1 block per meter within 4 blocks of viaduct
                 int topY = (dz <= 2.0) ? roadY : (roadY - (int) Math.round(dz - 2.0));
+                double dToViaduct = distToViaduct[stIdx];
+                if (dToViaduct <= 4.0) {
+                    int taperDrop = (int) Math.round(4.0 - dToViaduct);
+                    if (taperDrop > 0) {
+                        topY -= taperDrop;
+                    }
+                }
 
                 if (topY < groundY) {
-                    // Hillside cut -> slope (road_otkos)
-                    if (slopeEnabled && dz <= 2.5 && (groundY - roadY >= 2)) {
+                    // Hillside cut -> slope (road_otkos). Slopes NEVER round around end-caps!
+                    if (!cand.isEndCap() && slopeEnabled && dz <= 2.5 && (groundY - roadY >= 2)) {
                         int sx = (otkos != null) ? Math.floorMod((int) Math.round(cand.t()), otkos.getSizeX()) : 0;
-                        int schemZ = (int) Math.max(0, Math.min(otkosW - 1, Math.round(dz - 1.0)));
-                        for (int sy = 0; sy < otkosH; sy++) {
-                            int targetY = roadY + 1 + sy;
-                            if (targetY <= groundY + 1) {
-                                BlockState st = (otkos != null) ? otkos.getBlock(sx, sy, schemZ) : foundationState;
-                                if (!st.isAir()) {
-                                    blockMap.put(new BlockPos(cand.bx(), targetY, cand.bz()), st);
+                        int schemZ = (int) Math.max(0, Math.min(otkosW - 1, Math.round(dz - 0.5)));
+
+                        // 1. Retaining wall from roadY - 2 up to groundY + 1 (guaranteed stone replacement, no hanging dirt)
+                        for (int targetY = roadY - 2; targetY <= groundY + 1; targetY++) {
+                            BlockState st;
+                            if (targetY <= roadY) {
+                                st = foundationState;
+                            } else {
+                                int sy = (targetY - (roadY + 1)) % otkosH;
+                                st = (otkos != null) ? otkos.getBlock(sx, sy, schemZ) : foundationState;
+                                if (st == null || st.isAir()) {
+                                    st = foundationState;
+                                } else if (st.getBlock() instanceof StairBlock) {
+                                    Direction dir = facingFromVector(-cand.outX(), -cand.outZ());
+                                    st = orientStairs(st, dir, Half.BOTTOM);
                                 }
                             }
+                            blockMap.put(new BlockPos(cand.bx(), targetY, cand.bz()), st);
                         }
-                        blockMap.put(new BlockPos(cand.bx(), roadY, cand.bz()), foundationState);
-                        blockMap.put(new BlockPos(cand.bx(), roadY - 1, cand.bz()), foundationState);
+
+                        // 2. Air clearing above the retaining wall up to the sky
+                        int worldSurfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, cand.bx(), cand.bz());
+                        int clearTopY = Math.max(groundY + 4, worldSurfaceY + 1);
+                        for (int ay = groundY + 2; ay <= clearTopY; ay++) {
+                            blockMap.put(new BlockPos(cand.bx(), ay, cand.bz()), airState);
+                        }
                     }
                 } else {
                     // Embankment (road_nasip)
+                    // 1. Height threshold: only build embankment where road is elevated by at least 2 blocks over ground
+                    if (roadY - groundY < 2) {
+                        continue;
+                    }
+
+                    // 2. Prohibit embankment in water (Bug 15)
+                    BlockPos groundPos = new BlockPos(cand.bx(), groundY, cand.bz());
+                    BlockState groundState = level.getBlockState(groundPos);
+                    boolean isWater = !groundState.getFluidState().isEmpty()
+                            || groundState.is(Blocks.WATER)
+                            || groundState.getFluidState().is(FluidTags.WATER)
+                            || !level.getFluidState(groundPos).isEmpty()
+                            || !level.getFluidState(groundPos.above()).isEmpty()
+                            || level.getBlockState(groundPos.above()).is(Blocks.WATER);
+                    if (isWater) {
+                        continue;
+                    }
+
+                    // 3. Embankment placement (seamless against sidewalk curb at roadY, zero gap)
                     if (embankmentEnabled) {
                         if (dz < nasipW && nasip != null) {
                             int sx = Math.floorMod((int) Math.round(cand.t()), nasip.getSizeX());
-                            int schemZ = (int) Math.max(0, Math.min(nasipW - 1, Math.round(dz)));
+                            int schemZ = (int) Math.max(0, Math.min(nasipW - 1, (int) Math.floor(dz)));
+                            int highestPlacedY = Integer.MIN_VALUE;
                             for (int sy = 0; sy < nasipH; sy++) {
                                 int blockY = roadY - (4 - sy);
                                 if (blockY >= groundY && blockY <= topY) {
@@ -566,20 +830,28 @@ public final class RoadVoxelizer {
                                             st = orientStairs(st, dir, Half.BOTTOM);
                                         }
                                         blockMap.put(new BlockPos(cand.bx(), blockY, cand.bz()), st);
+                                        highestPlacedY = Math.max(highestPlacedY, blockY);
                                     }
                                 }
                             }
                             int lowestSchemY = roadY - 4;
-                            if (lowestSchemY > groundY) {
-                                for (int fy = lowestSchemY - 1; fy >= groundY; fy--) {
+                            int maxDirtY = Math.min(lowestSchemY - 1, topY);
+                            if (maxDirtY >= groundY) {
+                                if (highestPlacedY == Integer.MIN_VALUE) {
+                                    blockMap.put(new BlockPos(cand.bx(), maxDirtY, cand.bz()), grassState);
+                                    maxDirtY--;
+                                }
+                                for (int fy = maxDirtY; fy >= groundY; fy--) {
                                     blockMap.put(new BlockPos(cand.bx(), fy, cand.bz()), dirtState);
                                 }
                             }
                         } else {
                             // Extended slope down to terrain
-                            blockMap.put(new BlockPos(cand.bx(), topY, cand.bz()), grassState);
-                            for (int fy = topY - 1; fy >= groundY; fy--) {
-                                blockMap.put(new BlockPos(cand.bx(), fy, cand.bz()), dirtState);
+                            if (topY >= groundY) {
+                                blockMap.put(new BlockPos(cand.bx(), topY, cand.bz()), grassState);
+                                for (int fy = topY - 1; fy >= groundY; fy--) {
+                                    blockMap.put(new BlockPos(cand.bx(), fy, cand.bz()), dirtState);
+                                }
                             }
                         }
                     }
@@ -686,6 +958,19 @@ public final class RoadVoxelizer {
         int x0 = (int) Math.floor(minX) - r, x1 = (int) Math.ceil(maxX) + r;
         int z0 = (int) Math.floor(minZ) - r, z1 = (int) Math.ceil(maxZ) + r;
 
+        Vector3d p0 = curve.getP0();
+        Vector3d p3 = curve.getP3();
+        Vector3d tan0 = curve.evaluateTangent(0.0);
+        Vector3d tan3 = curve.evaluateTangent(1.0);
+
+        double t0Len = Math.hypot(tan0.x, tan0.z);
+        double t0x = t0Len > 1e-6 ? tan0.x / t0Len : 0.0;
+        double t0z = t0Len > 1e-6 ? tan0.z / t0Len : 1.0;
+
+        double t3Len = Math.hypot(tan3.x, tan3.z);
+        double t3x = t3Len > 1e-6 ? tan3.x / t3Len : 0.0;
+        double t3z = t3Len > 1e-6 ? tan3.z / t3Len : 1.0;
+
         for (int x = x0; x <= x1; x++) {
             for (int z = z0; z <= z1; z++) {
                 double bestD2 = Double.MAX_VALUE, bestRaw = 0, bestU = 0;
@@ -710,16 +995,19 @@ public final class RoadVoxelizer {
 
                 if (best < 0 || bestD2 > (halfWidth + 0.5) * (halfWidth + 0.5)) continue;
 
+                // Strict half-space bounding planes perpendicular to road centerline at curve start and end (Bug 1)
+                double startProj = (x - p0.x) * t0x + (z - p0.z) * t0z;
+                double endProj = (x - p3.x) * t3x + (z - p3.z) * t3z;
+                if (startProj < -0.01 || endProj > 0.01) {
+                    continue;
+                }
+
                 double vx = px[best + 1] - px[best];
                 double vz = pz[best + 1] - pz[best];
                 double segLen = Math.hypot(vx, vz);
                 if (segLen < 1e-6) continue;
                 double ux = vx / segLen, uz = vz / segLen;
                 double nx = -uz, nz = ux;
-
-                double along = bestRaw * segLen;
-                if (best == 0 && along < -0.5) continue;
-                if (best == segs - 1 && along > segLen + 0.5) continue;
 
                 double wx = x - px[best], wz = z - pz[best];
                 double cross = ux * wz - uz * wx;
@@ -728,30 +1016,35 @@ public final class RoadVoxelizer {
 
                 int cellY = (int) Math.round(py[best] + bestU * (py[best + 1] - py[best]));
 
-                if (s < -halfWidth - 0.2 || s >= halfWidth + 0.2) continue;
+                // Фактор нормализации шага сетки для диагоналей (Bug 16)
+                double normFactor = Math.max(Math.abs(nx), Math.abs(nz));
+                if (normFactor < 1e-5) normFactor = 1.0;
+                double sGrid = s / normFactor;
+
+                if (sGrid < -halfWidth - 0.2 || sGrid >= halfWidth + 0.2) continue;
 
                 int elemIdx = -1;
                 for (int i = 0; i < numElems; i++) {
-                    if (s >= elemStart[i] - EPS && s < elemEnd[i] + EPS) {
+                    if (sGrid >= elemStart[i] - EPS && sGrid < elemEnd[i] + EPS) {
                         elemIdx = i;
                         break;
                     }
                 }
                 if (elemIdx < 0) {
-                    if (s < elemStart[0]) elemIdx = 0;
+                    if (sGrid < elemStart[0]) elemIdx = 0;
                     else elemIdx = numElems - 1;
                 }
 
                 RoadStackElement elem = stack.get(elemIdx);
                 RoadElementType type = elem.getType();
                 int elemW = elem.getWidth();
-                int localX = (int) Math.floor(s - elemStart[elemIdx]);
+                int localX = (int) Math.floor(sGrid - elemStart[elemIdx]);
                 localX = Math.max(0, Math.min(elemW - 1, localX));
-                boolean isLeftSide = (s < 0);
+                boolean isLeftSide = (sGrid < 0);
 
                 Direction facingOutward = facingFromVector(nx * (isLeftSide ? -1 : 1), nz * (isLeftSide ? -1 : 1));
 
-                int roadLocalX = (int) Math.floor(s + halfWidth);
+                int roadLocalX = (int) Math.floor(sGrid + halfWidth);
                 roadLocalX = Math.max(0, Math.min(totalW - 1, roadLocalX));
 
                 switch (type) {

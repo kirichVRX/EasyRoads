@@ -7,6 +7,7 @@ import com.roadbuilder.mod.domain.pack.RoadPackRegistry;
 import com.roadbuilder.mod.domain.profile.*;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -19,6 +20,7 @@ import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.StairsShape;
 import org.joml.Quaternionf;
 import org.lwjgl.glfw.GLFW;
+import com.roadbuilder.mod.client.cache.ClientGraphCache;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -63,8 +65,38 @@ public class RoadPresetStudioScreen extends Screen {
     private boolean isAddMenuOpen = false;
     private float addMenuScroll = 0.0f;
 
+    private EditBox nameEditBox;
+
     public RoadPresetStudioScreen() {
         super(Component.literal("Road Preset Studio"));
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        int panelW = 195;
+        int rx = this.width - panelW - 16;
+        int y1 = 20;
+
+        ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
+        this.nameEditBox = new EditBox(
+                this.font,
+                rx + 8,
+                y1 + 22,
+                panelW - 16,
+                18,
+                Component.translatable("roadbuilder.gui.preset_name")
+        );
+        this.nameEditBox.setMaxLength(32);
+        this.nameEditBox.setValue(active != null ? active.getName() : "Road");
+        this.nameEditBox.setResponder(text -> {
+            ModularRoadPreset cur = PresetManager.getInstance().getActivePreset();
+            if (cur != null && !text.isBlank()) {
+                cur.setName(text.trim());
+                PresetManager.getInstance().saveToFile();
+            }
+        });
+        this.addRenderableWidget(this.nameEditBox);
     }
 
     @Override
@@ -124,8 +156,9 @@ public class RoadPresetStudioScreen extends Screen {
         int tab0Border = (leftTab == 0) ? 0xFF66B3FF : 0xFF335577;
         guiGraphics.fill(tab1X, tabY, tab1X + tabW, tabY + tabH, tab0Border);
         guiGraphics.fill(tab1X + 1, tabY + 1, tab1X + tabW - 1, tabY + tabH - 1, tab0Bg);
-        int t0W = this.font.width("Паки");
-        guiGraphics.drawString(this.font, "Паки", tab1X + (tabW - t0W) / 2, tabY + 6, leftTab == 0 ? 0xFFFFFFFF : 0xFFAAAAAA, false);
+        String t0Str = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.packs").getString();
+        int t0W = this.font.width(t0Str);
+        guiGraphics.drawString(this.font, t0Str, tab1X + (tabW - t0W) / 2, tabY + 6, leftTab == 0 ? 0xFFFFFFFF : 0xFFAAAAAA, false);
 
         // Tab 1: Пресеты
         boolean tab1Hover = mouseX >= tab2X && mouseX <= tab2X + tabW && mouseY >= tabY && mouseY <= tabY + tabH;
@@ -133,8 +166,9 @@ public class RoadPresetStudioScreen extends Screen {
         int tab1Border = (leftTab == 1) ? 0xFF66B3FF : 0xFF335577;
         guiGraphics.fill(tab2X, tabY, tab2X + tabW, tabY + tabH, tab1Border);
         guiGraphics.fill(tab2X + 1, tabY + 1, tab2X + tabW - 1, tabY + tabH - 1, tab1Bg);
-        int t1W = this.font.width("Пресеты");
-        guiGraphics.drawString(this.font, "Пресеты", tab2X + (tabW - t1W) / 2, tabY + 6, leftTab == 1 ? 0xFFFFFFFF : 0xFFAAAAAA, false);
+        String t1Str = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.presets").getString();
+        int t1W = this.font.width(t1Str);
+        guiGraphics.drawString(this.font, t1Str, tab2X + (tabW - t1W) / 2, tabY + 6, leftTab == 1 ? 0xFFFFFFFF : 0xFFAAAAAA, false);
 
         int contentY = tabY + tabH + 8;
         int bottomReserve = (leftTab == 1) ? 36 : 8;
@@ -180,7 +214,7 @@ public class RoadPresetStudioScreen extends Screen {
                 guiGraphics.fill(x + 8, curY, x + panelW - 8, curY + 20, itemBorder);
                 guiGraphics.fill(x + 9, curY + 1, x + panelW - 9, curY + 19, itemBg);
 
-                String name = preset.getName();
+                String name = preset.getDisplayName();
                 if (this.font.width(name) > panelW - 28) {
                     name = this.font.plainSubstrByWidth(name, panelW - 36) + "...";
                 }
@@ -203,16 +237,18 @@ public class RoadPresetStudioScreen extends Screen {
             boolean h1 = mouseX >= b1X && mouseX <= b1X + bW && mouseY >= btnY && mouseY <= btnY + btnH2;
             guiGraphics.fill(b1X, btnY, b1X + bW, btnY + btnH2, h1 ? 0xFF66B3FF : 0xFF2A75D3);
             guiGraphics.fill(b1X + 1, btnY + 1, b1X + bW - 1, btnY + btnH2 - 1, h1 ? 0xFF244A75 : 0xFF162D4A);
-            int nw = this.font.width("+Нов");
-            guiGraphics.drawString(this.font, "+Нов", b1X + (bW - nw) / 2, btnY + 6, 0xFFFFFFFF, false);
+            String newStr = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.new").getString();
+            int nw = this.font.width(newStr);
+            guiGraphics.drawString(this.font, newStr, b1X + (bW - nw) / 2, btnY + 6, 0xFFFFFFFF, false);
 
             // [Копия]
             int b2X = b1X + bW + gap;
             boolean h2 = mouseX >= b2X && mouseX <= b2X + bW && mouseY >= btnY && mouseY <= btnY + btnH2;
             guiGraphics.fill(b2X, btnY, b2X + bW, btnY + btnH2, h2 ? 0xFF66B3FF : 0xFF2A75D3);
             guiGraphics.fill(b2X + 1, btnY + 1, b2X + bW - 1, btnY + btnH2 - 1, h2 ? 0xFF244A75 : 0xFF162D4A);
-            int cw = this.font.width("Копия");
-            guiGraphics.drawString(this.font, "Копия", b2X + (bW - cw) / 2, btnY + 6, 0xFFFFFFFF, false);
+            String copyStr = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.clone").getString();
+            int cw = this.font.width(copyStr);
+            guiGraphics.drawString(this.font, copyStr, b2X + (bW - cw) / 2, btnY + 6, 0xFFFFFFFF, false);
 
             // [Удал]
             int b3X = b2X + bW + gap;
@@ -222,8 +258,9 @@ public class RoadPresetStudioScreen extends Screen {
             int delBg = canDelete ? (h3 ? 0xFF551818 : 0xFF351212) : 0xFF222222;
             guiGraphics.fill(b3X, btnY, b3X + bW, btnY + btnH2, delBorder);
             guiGraphics.fill(b3X + 1, btnY + 1, b3X + bW - 1, btnY + btnH2 - 1, delBg);
-            int dw = this.font.width("Удал");
-            guiGraphics.drawString(this.font, "Удал", b3X + (bW - dw) / 2, btnY + 6, canDelete ? 0xFFFFAAAA : 0xFF666666, false);
+            String delStr = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.delete").getString();
+            int dw = this.font.width(delStr);
+            guiGraphics.drawString(this.font, delStr, b3X + (bW - dw) / 2, btnY + 6, canDelete ? 0xFFFFAAAA : 0xFF666666, false);
         }
     }
 
@@ -231,33 +268,40 @@ public class RoadPresetStudioScreen extends Screen {
         int panelW = 195;
         int x = this.width - panelW - 16;
 
-        // Card 1: Настройки
-        int y1 = 20;
+        // Card 0: Имя пресета
+        int y0 = 20;
+        int h0 = 46;
+        guiGraphics.fill(x, y0, x + panelW, y0 + h0, 0xEE1E2436);
+        guiGraphics.fill(x, y0, x + panelW, y0 + 2, 0xFF354466);
+        guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.preset_name", "Название пресета").getString(), x + 10, y0 + 6, 0xFFFFFFFF, false);
+
+        // Card 1: Настройки (сдвинуты на y0 + h0 + 8)
+        int y1 = y0 + h0 + 8;
         int h1 = 126;
         guiGraphics.fill(x, y1, x + panelW, y1 + h1, 0xEE1E2436);
         guiGraphics.fill(x, y1, x + panelW, y1 + 2, 0xFF354466);
-        guiGraphics.drawString(this.font, "Настройки профиля", x + 10, y1 + 8, 0xFFFFFFFF, false);
+        guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.settings_title").getString(), x + 10, y1 + 8, 0xFFFFFFFF, false);
 
         ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
         int sy = y1 + 26;
-        drawSettingButton(guiGraphics, x + 8, sy, panelW - 16, 20, "Эстакада: " + active.getViaductMode().getLabel(), mouseX, mouseY);
-        drawSettingButton(guiGraphics, x + 8, sy + 24, panelW - 16, 20, "Туннели: " + active.getTunnelMode().getLabel(), mouseX, mouseY);
-        drawSettingButton(guiGraphics, x + 8, sy + 48, panelW - 16, 20, "Откосы: " + active.getSlopeMode().getLabel(), mouseX, mouseY);
-        drawSettingButton(guiGraphics, x + 8, sy + 72, panelW - 16, 20, "Насыпь: " + active.getEmbankmentMode().getLabel(), mouseX, mouseY);
+        drawSettingButton(guiGraphics, x + 8, sy, panelW - 16, 20, Component.translatable("roadbuilder.gui.viaduct", active.getViaductMode().getLabel()).getString(), mouseX, mouseY);
+        drawSettingButton(guiGraphics, x + 8, sy + 24, panelW - 16, 20, Component.translatable("roadbuilder.gui.tunnel", active.getTunnelMode().getLabel()).getString(), mouseX, mouseY);
+        drawSettingButton(guiGraphics, x + 8, sy + 48, panelW - 16, 20, Component.translatable("roadbuilder.gui.slope", active.getSlopeMode().getLabel()).getString(), mouseX, mouseY);
+        drawSettingButton(guiGraphics, x + 8, sy + 72, panelW - 16, 20, Component.translatable("roadbuilder.gui.embankment", active.getEmbankmentMode().getLabel()).getString(), mouseX, mouseY);
 
         // Card 2: Отображение в предпросмотре
-        int y2 = y1 + h1 + 10;
+        int y2 = y1 + h1 + 8;
         int h2 = 150;
         guiGraphics.fill(x, y2, x + panelW, y2 + h2, 0xEE1E2436);
         guiGraphics.fill(x, y2, x + panelW, y2 + 2, 0xFF354466);
-        guiGraphics.drawString(this.font, "Отображение в студии", x + 10, y2 + 8, 0xFFFFFFFF, false);
+        guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.view_title").getString(), x + 10, y2 + 8, 0xFFFFFFFF, false);
 
         int vy = y2 + 26;
-        drawToggleButton(guiGraphics, x + 8, vy, panelW - 16, 20, "Дорога", viewRoad, mouseX, mouseY);
-        drawToggleButton(guiGraphics, x + 8, vy + 24, panelW - 16, 20, "Эстакада", viewViaduct, mouseX, mouseY);
-        drawToggleButton(guiGraphics, x + 8, vy + 48, panelW - 16, 20, "Туннель", viewTunnel, mouseX, mouseY);
-        drawToggleButton(guiGraphics, x + 8, vy + 72, panelW - 16, 20, "Насыпь", viewEmbankment, mouseX, mouseY);
-        drawToggleButton(guiGraphics, x + 8, vy + 96, panelW - 16, 20, "Откосы", viewSlope, mouseX, mouseY);
+        drawToggleButton(guiGraphics, x + 8, vy, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_road").getString(), viewRoad, mouseX, mouseY);
+        drawToggleButton(guiGraphics, x + 8, vy + 24, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_viaduct").getString(), viewViaduct, mouseX, mouseY);
+        drawToggleButton(guiGraphics, x + 8, vy + 48, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_tunnel").getString(), viewTunnel, mouseX, mouseY);
+        drawToggleButton(guiGraphics, x + 8, vy + 72, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_embankment").getString(), viewEmbankment, mouseX, mouseY);
+        drawToggleButton(guiGraphics, x + 8, vy + 96, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_slope").getString(), viewSlope, mouseX, mouseY);
     }
 
     private void drawSettingButton(GuiGraphics guiGraphics, int x, int y, int w, int h, String text, int mouseX, int mouseY) {
@@ -276,7 +320,7 @@ public class RoadPresetStudioScreen extends Screen {
         guiGraphics.fill(x, y, x + w, y + h, border);
         guiGraphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, bg);
 
-        String stateStr = active ? "ВКЛ" : "ВЫКЛ";
+        String stateStr = active ? net.minecraft.network.chat.Component.translatable("roadbuilder.gui.state_on").getString() : net.minecraft.network.chat.Component.translatable("roadbuilder.gui.state_off").getString();
         guiGraphics.drawString(this.font, text, x + 8, y + 6, active ? 0xFFFFFFFF : 0xFFA0B0C0, false);
         int sw = this.font.width(stateStr);
         guiGraphics.drawString(this.font, stateStr, x + w - sw - 8, y + 6, active ? 0xFF66FF88 : 0xFF888888, false);
@@ -360,8 +404,9 @@ public class RoadPresetStudioScreen extends Screen {
         boolean plusHover = mouseX >= ax && mouseX <= ax + btnAddW && mouseY >= actionY && mouseY <= actionY + actionH;
         guiGraphics.fill(ax, actionY, ax + btnAddW, actionY + actionH, plusHover ? 0xFF66B3FF : 0xFF2A75D3);
         guiGraphics.fill(ax + 1, actionY + 1, ax + btnAddW - 1, actionY + actionH - 1, 0xFF14243B);
-        int paw = this.font.width("+ Добавить");
-        guiGraphics.drawString(this.font, "+ Добавить", ax + (btnAddW - paw) / 2, actionY + 7, 0xFF66B3FF, false);
+        String addStr = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.add_element").getString();
+        int paw = this.font.width(addStr);
+        guiGraphics.drawString(this.font, addStr, ax + (btnAddW - paw) / 2, actionY + 7, 0xFF66B3FF, false);
 
         // 2. [- Удалить]
         ax += btnAddW + gap;
@@ -370,8 +415,9 @@ public class RoadPresetStudioScreen extends Screen {
         int minusBorder = canDelete ? (minusHover ? 0xFFFF7777 : 0xFFD32A2A) : 0xFF555555;
         guiGraphics.fill(ax, actionY, ax + btnDelW, actionY + actionH, minusBorder);
         guiGraphics.fill(ax + 1, actionY + 1, ax + btnDelW - 1, actionY + actionH - 1, 0xFF14243B);
-        int maw = this.font.width("- Удалить");
-        guiGraphics.drawString(this.font, "- Удалить", ax + (btnDelW - maw) / 2, actionY + 7, canDelete ? (minusHover ? 0xFFFFFFFF : 0xFFFF7777) : 0xFF777777, false);
+        String remStr = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.remove_element").getString();
+        int maw = this.font.width(remStr);
+        guiGraphics.drawString(this.font, remStr, ax + (btnDelW - maw) / 2, actionY + 7, canDelete ? (minusHover ? 0xFFFFFFFF : 0xFFFF7777) : 0xFF777777, false);
 
         // 3. [ ◄ ] Move Left
         ax += btnDelW + gap;
@@ -951,7 +997,9 @@ public class RoadPresetStudioScreen extends Screen {
                 for (ModularRoadPreset preset : PresetManager.getInstance().getAllPresets()) {
                     if (mouseX >= lx + 8 && mouseX <= lx + panelW - 8 && mouseY >= curY && mouseY <= curY + 20) {
                         PresetManager.getInstance().setActivePresetId(preset.getId());
+                        ClientGraphCache.getInstance().markPreviewDirty();
                         selectedElementIdx = -1;
+                        if (nameEditBox != null) nameEditBox.setValue(preset.getName());
                         return true;
                     }
                     curY += 24;
@@ -968,24 +1016,27 @@ public class RoadPresetStudioScreen extends Screen {
                 if (mouseX >= b1X && mouseX <= b1X + bW && mouseY >= btnY && mouseY <= btnY + btnH2) {
                     ModularRoadPreset np = PresetManager.getInstance().createNewPreset();
                     selectedElementIdx = -1;
+                    if (nameEditBox != null) nameEditBox.setValue(np.getName());
                     return true;
                 }
 
                 // [Копия]
                 int b2X = b1X + bW + gap;
                 if (mouseX >= b2X && mouseX <= b2X + bW && mouseY >= btnY && mouseY <= btnY + btnH2) {
-                    ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
-                    PresetManager.getInstance().duplicatePreset(active.getId());
+                    ModularRoadPreset activeP = PresetManager.getInstance().getActivePreset();
+                    ModularRoadPreset dup = PresetManager.getInstance().duplicatePreset(activeP.getId());
                     selectedElementIdx = -1;
+                    if (nameEditBox != null && dup != null) nameEditBox.setValue(dup.getName());
                     return true;
                 }
 
                 // [Удал]
                 int b3X = b2X + bW + gap;
                 if (mouseX >= b3X && mouseX <= b3X + bW && mouseY >= btnY && mouseY <= btnY + btnH2) {
-                    ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
-                    PresetManager.getInstance().deletePreset(active.getId());
+                    ModularRoadPreset activeP = PresetManager.getInstance().getActivePreset();
+                    PresetManager.getInstance().deletePreset(activeP.getId());
                     selectedElementIdx = -1;
+                    if (nameEditBox != null) nameEditBox.setValue(PresetManager.getInstance().getActivePreset().getName());
                     return true;
                 }
             }
@@ -995,10 +1046,16 @@ public class RoadPresetStudioScreen extends Screen {
         // 3. Right Panel handling
         int rPanelW = 195;
         int rx = this.width - rPanelW - 16;
-        int y1 = 20;
+        int y0 = 20;
+        int y1 = y0 + 46 + 8;
         int sy = y1 + 26;
 
         ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
+
+        if (this.nameEditBox != null && this.nameEditBox.mouseClicked(mouseX, mouseY, button)) {
+            this.setFocused(this.nameEditBox);
+            return true;
+        }
 
         if (mouseX >= rx + 8 && mouseX <= rx + rPanelW - 8) {
             // Settings card
@@ -1021,7 +1078,7 @@ public class RoadPresetStudioScreen extends Screen {
             }
 
             // View toggles card
-            int y2 = y1 + 126 + 10;
+            int y2 = y1 + 126 + 8;
             int vy = y2 + 26;
             if (mouseY >= vy && mouseY <= vy + 20) { viewRoad = !viewRoad; return true; }
             if (mouseY >= vy + 24 && mouseY <= vy + 44) { viewViaduct = !viewViaduct; return true; }
@@ -1277,6 +1334,14 @@ public class RoadPresetStudioScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (this.nameEditBox != null && this.nameEditBox.isFocused()) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                this.nameEditBox.setFocused(false);
+                return true;
+            }
+            return super.keyPressed(keyCode, scanCode, modifiers);
+        }
+
         if (selectedElementIdx >= 0) {
             ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
             List<RoadStackElement> stack = active.getStack();
@@ -1309,5 +1374,11 @@ public class RoadPresetStudioScreen extends Screen {
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public void onClose() {
+        ClientGraphCache.getInstance().markPreviewDirty();
+        super.onClose();
     }
 }

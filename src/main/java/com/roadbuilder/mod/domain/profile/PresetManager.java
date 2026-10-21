@@ -77,7 +77,8 @@ public final class PresetManager {
         ModularRoadPreset copy = orig.copy();
         String newId = "preset_" + System.currentTimeMillis();
         copy.setId(newId);
-        copy.setName(orig.getName() + " (копия)");
+        String copySuffix = net.minecraft.network.chat.Component.translatable("roadbuilder.preset.copy_suffix").getString();
+        copy.setName(orig.getDisplayName() + " " + copySuffix);
         presets.put(newId, copy);
         this.activePresetId = newId;
         saveToFile();
@@ -88,7 +89,8 @@ public final class PresetManager {
         String newId = "preset_" + System.currentTimeMillis();
         ModularRoadPreset newP = ModularRoadPreset.createDefault();
         newP.setId(newId);
-        newP.setName("Пресет " + (presets.size() + 1));
+        String newName = net.minecraft.network.chat.Component.translatable("roadbuilder.preset.new_name", (presets.size() + 1)).getString();
+        newP.setName(newName);
         presets.put(newId, newP);
         this.activePresetId = newId;
         saveToFile();

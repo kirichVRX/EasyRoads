@@ -113,10 +113,10 @@ public final class ServerPayloadHandler {
             );
             PacketDistributor.sendToPlayersInDimension(level, syncPayload);
 
-            serverPlayer.sendSystemMessage(Component.literal(String.format(
-                    "§a[RoadBuilder] Successfully built road segment (length: %.1fm)! §7(Ctrl+Z для отмены)",
-                    curve.getApproximateLength()
-            )));
+            serverPlayer.sendSystemMessage(Component.translatable(
+                    "roadbuilder.message.road_built_length",
+                    String.format(java.util.Locale.US, "%.1f", curve.getApproximateLength())
+            ));
         });
     }
 

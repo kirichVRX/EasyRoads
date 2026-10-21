@@ -1,48 +1,57 @@
 package com.roadbuilder.mod.domain.profile;
 
 import com.google.gson.annotations.SerializedName;
+import net.minecraft.network.chat.Component;
+
+import java.util.Locale;
 
 /**
  * Type of road element in the profile stack.
  */
 public enum RoadElementType {
     @SerializedName("sidewalk")
-    SIDEWALK("Тротуар", 4),
+    SIDEWALK(4),
 
     @SerializedName("curb")
-    CURB("Бордюр", 1),
+    CURB(1),
 
     @SerializedName("lane")
-    LANE("Полоса", 4),
+    LANE(4),
 
     @SerializedName("marking_dashed_long")
-    MARKING_DASHED_LONG("Разметка (длинная)", 1),
+    MARKING_DASHED_LONG(1),
 
     @SerializedName("marking_dashed_short")
-    MARKING_DASHED_SHORT("Разметка (короткая)", 1),
+    MARKING_DASHED_SHORT(1),
 
     @SerializedName("marking_solid")
-    MARKING_SOLID("Разметка (сплошная)", 1),
+    MARKING_SOLID(1),
 
     @SerializedName("marking_double_solid")
-    MARKING_DOUBLE_SOLID("Разметка (двойная)", 3),
+    MARKING_DOUBLE_SOLID(3),
 
     @SerializedName("divider_grass")
-    DIVIDER_GRASS("Газон/Разделитель", 5),
+    DIVIDER_GRASS(5),
 
     @SerializedName("shoulder")
-    SHOULDER("Обочина", 3);
+    SHOULDER(3);
 
-    private final String displayName;
     private final int defaultWidth;
 
-    RoadElementType(String displayName, int defaultWidth) {
-        this.displayName = displayName;
+    RoadElementType(int defaultWidth) {
         this.defaultWidth = defaultWidth;
     }
 
+    public String getTranslationKey() {
+        return "roadbuilder.element." + name().toLowerCase(Locale.ROOT);
+    }
+
+    public Component getDisplayNameComponent() {
+        return Component.translatable(getTranslationKey());
+    }
+
     public String getDisplayName() {
-        return displayName;
+        return getDisplayNameComponent().getString();
     }
 
     public int getDefaultWidth() {

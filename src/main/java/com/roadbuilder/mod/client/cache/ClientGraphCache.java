@@ -4,7 +4,11 @@ import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
 import com.roadbuilder.mod.domain.graph.RoadNetworkGraph;
 import com.roadbuilder.mod.domain.profile.RoadProfile;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -21,6 +25,9 @@ public final class ClientGraphCache {
 
     private final java.util.List<BezierCurve3D> previewCurves = new java.util.ArrayList<>();
     private RoadProfile activeProfile = RoadProfile.createDefault();
+
+    private Map<BlockPos, BlockState> cachedPreviewBlocks = Collections.emptyMap();
+    private boolean previewDirty = true;
 
     private ClientGraphCache() {}
 
@@ -57,10 +64,30 @@ public final class ClientGraphCache {
         if (curves != null) {
             this.previewCurves.addAll(curves);
         }
+        markPreviewDirty();
     }
 
     public void clearPreview() {
         this.previewCurves.clear();
+        this.cachedPreviewBlocks = Collections.emptyMap();
+        markPreviewDirty();
+    }
+
+    public boolean isPreviewDirty() {
+        return previewDirty;
+    }
+
+    public void markPreviewDirty() {
+        this.previewDirty = true;
+    }
+
+    public Map<BlockPos, BlockState> getCachedPreviewBlocks() {
+        return cachedPreviewBlocks;
+    }
+
+    public void setCachedPreviewBlocks(Map<BlockPos, BlockState> blocks) {
+        this.cachedPreviewBlocks = (blocks != null) ? blocks : Collections.emptyMap();
+        this.previewDirty = false;
     }
 
     public RoadProfile getActiveProfile() {
@@ -69,6 +96,7 @@ public final class ClientGraphCache {
 
     public void setActiveProfile(RoadProfile activeProfile) {
         this.activeProfile = activeProfile;
+        markPreviewDirty();
     }
 
     public void clear() {
@@ -76,5 +104,7 @@ public final class ClientGraphCache {
         hoveredNodeId = null;
         selectedNodeId = null;
         previewCurves.clear();
+        cachedPreviewBlocks = Collections.emptyMap();
+        markPreviewDirty();
     }
 }

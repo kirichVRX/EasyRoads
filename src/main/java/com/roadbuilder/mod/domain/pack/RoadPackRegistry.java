@@ -26,7 +26,12 @@ public final class RoadPackRegistry {
         }
 
         public String getId() { return id; }
-        public String getDisplayName() { return displayName; }
+        public String getDisplayName() {
+            if ("default".equals(id)) {
+                return net.minecraft.network.chat.Component.translatable("roadbuilder.pack.default").getString();
+            }
+            return displayName;
+        }
 
         public void putSchematic(String key, LitematicParser.Schematic schematic) {
             schematics.put(key, schematic);
@@ -53,7 +58,7 @@ public final class RoadPackRegistry {
     }
 
     private void initDefaultPack() {
-        RoadPack defaultPack = new RoadPack("default", "Стандартный (Vanilla)");
+        RoadPack defaultPack = new RoadPack("default", "Standard (Vanilla)");
 
         // 1. Load built-in bundled schematics from JAR resources
         String[] builtinKeys = {

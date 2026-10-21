@@ -36,7 +36,9 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.model.data.ModelData;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -118,10 +120,7 @@ public final class GizmoRenderer {
 
         // 2. Render translucent textured phantom blocks in their own dedicated batch
         if (!previewCurves.isEmpty()) {
-            RoadProfile profile = ClientGraphCache.getInstance().getActiveProfile();
-            for (BezierCurve3D preview : previewCurves) {
-                renderTexturedPhantomBlocks(mc, poseStack, bufferSource, preview, profile);
-            }
+            renderTexturedPhantomBlocks(mc, poseStack, bufferSource, previewCurves);
             bufferSource.endBatch(RenderType.translucent());
         }
 
@@ -154,19 +153,33 @@ public final class GizmoRenderer {
     /**
      * Renders textured translucent phantom blocks like Axiom / Litematica using Minecraft's BlockRenderDispatcher.
      * Accurately displays the entire road, including embankments, viaduct pillars, and slopes in the in-world preview!
+     * Cached and culled for optimal FPS (recalculated only when previewDirty == true).
      */
     private static void renderTexturedPhantomBlocks(Minecraft mc, PoseStack poseStack, MultiBufferSource.BufferSource bufferSource,
-                                                   BezierCurve3D curve, RoadProfile profile) {
-        ModularRoadPreset preset = PresetManager.getInstance().getActivePreset();
-        java.util.Map<BlockPos, BlockState> blocksToRender = com.roadbuilder.mod.server.voxelizer.RoadVoxelizer.calculateRoadBlocks(
-                mc.level, curve, preset, ClientGraphCache.getInstance().getGraph()
-        );
+                                                   List<BezierCurve3D> curves) {
+        ClientGraphCache cache = ClientGraphCache.getInstance();
+        Map<BlockPos, BlockState> blocksToRender;
+
+        if (cache.isPreviewDirty()) {
+            blocksToRender = new HashMap<>();
+            ModularRoadPreset preset = PresetManager.getInstance().getActivePreset();
+            for (BezierCurve3D curve : curves) {
+                Map<BlockPos, BlockState> curveBlocks = com.roadbuilder.mod.server.voxelizer.RoadVoxelizer.calculateRoadBlocks(
+                        mc.level, curve, preset, cache.getGraph()
+                );
+                blocksToRender.putAll(curveBlocks);
+            }
+            cache.setCachedPreviewBlocks(blocksToRender);
+        } else {
+            blocksToRender = cache.getCachedPreviewBlocks();
+        }
+
         if (blocksToRender.isEmpty()) return;
 
         BlockRenderDispatcher dispatcher = mc.getBlockRenderer();
         VertexConsumer translucentBuffer = bufferSource.getBuffer(RenderType.translucent());
 
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : blocksToRender.entrySet()) {
+        for (Map.Entry<BlockPos, BlockState> entry : blocksToRender.entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState stateToRender = entry.getValue();
 
@@ -174,19 +187,27 @@ public final class GizmoRenderer {
             poseStack.translate(pos.getX(), pos.getY(), pos.getZ());
 
             BakedModel model = dispatcher.getBlockModel(stateToRender);
-            renderModelTranslucent(model, stateToRender, poseStack, translucentBuffer, 0.65f);
+            renderModelTranslucent(model, stateToRender, poseStack, translucentBuffer, 0.65f, pos, blocksToRender);
 
             poseStack.popPose();
         }
     }
 
-    private static void renderModelTranslucent(BakedModel model, BlockState state, PoseStack poseStack, VertexConsumer buffer, float alpha) {
+    private static void renderModelTranslucent(BakedModel model, BlockState state, PoseStack poseStack, VertexConsumer buffer, float alpha,
+                                               BlockPos pos, Map<BlockPos, BlockState> blockMap) {
         PoseStack.Pose lastPose = poseStack.last();
         for (Direction direction : Direction.values()) {
+            // Neighbor culling: check if neighbor in this direction is in preview blocks and opaque
+            BlockState neighbor = blockMap.get(pos.relative(direction));
+            if (neighbor != null && neighbor.canOcclude() && !(neighbor.getBlock() instanceof StairBlock)) {
+                continue;
+            }
+
             RANDOM.setSeed(42L);
             List<BakedQuad> quads = model.getQuads(state, direction, RANDOM, ModelData.EMPTY, null);
             renderQuadsTranslucent(lastPose, buffer, quads, alpha);
         }
+
         RANDOM.setSeed(42L);
         List<BakedQuad> unculled = model.getQuads(state, null, RANDOM, ModelData.EMPTY, null);
         renderQuadsTranslucent(lastPose, buffer, unculled, alpha);

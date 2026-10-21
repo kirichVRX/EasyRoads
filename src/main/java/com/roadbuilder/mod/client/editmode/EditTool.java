@@ -1,42 +1,57 @@
 package com.roadbuilder.mod.client.editmode;
 
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+
 /**
  * Available tools in the Road Builder editor mode.
  */
 public enum EditTool {
-    ADD_POINT("Добавить", "Ставит новые опорные точки трассы (ЛКМ)", "add"),
-    SELECT_POINT("Выбрать", "Выбирает точку для перемещения или редактирования", "select"),
-    ADJUST_POINT("Двигать", "Перемещает точку: колесо мыши Y, стрелочки или WASD по XZ", "adjust"),
-    DELETE_POINT("Удалить", "Удаляет выбранную точку из трассы (ЛКМ)", "delete");
+    ADD_POINT("add"),
+    SELECT_POINT("select"),
+    ADJUST_POINT("adjust"),
+    DELETE_POINT("delete");
 
-    private final String label;
-    private final String description;
     private final String iconName;
-    private final net.minecraft.resources.ResourceLocation iconLocation;
+    private final ResourceLocation iconLocation;
 
-    EditTool(String label, String description, String iconName) {
-        this.label = label;
-        this.description = description;
+    EditTool(String iconName) {
         this.iconName = iconName;
-        this.iconLocation = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
+        this.iconLocation = ResourceLocation.fromNamespaceAndPath(
                 com.roadbuilder.mod.core.RoadBuilderMod.MOD_ID,
                 "textures/gui/tools/" + iconName + ".png"
         );
     }
 
+    public String getTranslationKey() {
+        return "roadbuilder.tool." + iconName;
+    }
+
+    public String getDescriptionKey() {
+        return "roadbuilder.tool." + iconName + ".desc";
+    }
+
+    public Component getDisplayName() {
+        return Component.translatable(getTranslationKey());
+    }
+
+    public Component getDescriptionComponent() {
+        return Component.translatable(getDescriptionKey());
+    }
+
     public String getLabel() {
-        return label;
+        return getDisplayName().getString();
     }
 
     public String getDescription() {
-        return description;
+        return getDescriptionComponent().getString();
     }
 
     public String getIconName() {
         return iconName;
     }
 
-    public net.minecraft.resources.ResourceLocation getIconLocation() {
+    public ResourceLocation getIconLocation() {
         return iconLocation;
     }
 }

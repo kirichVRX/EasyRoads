@@ -48,9 +48,11 @@ public final class EditModeManager {
 
     public void setCurrentTool(EditTool tool) {
         this.currentTool = tool;
+        updatePreviewCurves();
+        ClientGraphCache.getInstance().markPreviewDirty();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal("§6[Инструмент]: §f" + tool.getLabel() + " §7- " + tool.getDescription()), true);
+            mc.player.displayClientMessage(Component.translatable("roadbuilder.message.tool_selected", tool.getDisplayName(), tool.getDescriptionComponent()), true);
         }
     }
 
@@ -76,10 +78,10 @@ public final class EditModeManager {
         }
 
         if (player != null) {
-            String msg = editModeActive
-                    ? "§a[RoadBuilder] Режим редактирования включен (F7). Инструменты [1-4]"
-                    : "§c[RoadBuilder] Режим редактирования выключен";
-            player.displayClientMessage(Component.literal(msg), true);
+            Component msg = editModeActive
+                    ? Component.translatable("roadbuilder.message.edit_mode_enabled")
+                    : Component.translatable("roadbuilder.message.edit_mode_disabled");
+            player.displayClientMessage(msg, true);
         }
     }
 
@@ -91,7 +93,7 @@ public final class EditModeManager {
 
         List<Vector3d> allPts = new ArrayList<>(chainedPoints);
 
-        // Only project cursor when actively adding points
+        // Project cursor for ribbon line when actively adding points
         if (currentTool == EditTool.ADD_POINT && raycast.worldPosition().isPresent()) {
             Vector3d cursor = raycast.worldPosition().get();
             Vector3d last = chainedPoints.get(chainedPoints.size() - 1);
@@ -105,44 +107,103 @@ public final class EditModeManager {
             return;
         }
 
-        List<BezierCurve3D> curves = new ArrayList<>();
-        for (int i = 0; i < allPts.size() - 1; i++) {
-            Vector3d p0 = allPts.get(i);
-            Vector3d p3 = allPts.get(i + 1);
-            double dist = p0.distanceTo(p3);
+        List<BezierCurve3D> curves = generateCurvesFromChain(allPts, chainedNodeIds);
+        // Update lightweight ribbon curves without marking previewDirty (avoids per-frame voxel recalculation)
+        ClientGraphCache.getInstance().getPreviewCurves().clear();
+        ClientGraphCache.getInstance().getPreviewCurves().addAll(curves);
+    }
 
-            Vector3d forward;
-            if (i > 0) {
-                Vector3d prevPt = allPts.get(i - 1);
-                forward = p0.subtract(prevPt).normalize();
-            } else {
-                // If the first point is attached to an existing node, use that node's outgoing tangent!
-                UUID startId = !chainedNodeIds.isEmpty() ? chainedNodeIds.get(0) : null;
-                RoadNode existingStart = (startId != null) ? ClientGraphCache.getInstance().getGraph().getNode(startId) : null;
-                if (existingStart != null && existingStart.getTangent() != null && existingStart.getTangent().lengthSquared() > 0.01) {
-                    Vector3d nodeTang = existingStart.getTangent();
-                    Vector3d dirToEnd = p3.subtract(p0).normalize();
-                    // Align tangent direction with the outgoing road direction
-                    if (nodeTang.dot(dirToEnd) >= 0) {
-                        forward = nodeTang;
-                    } else {
-                        forward = nodeTang.multiply(-1.0);
-                    }
-                } else {
-                    forward = p3.subtract(p0).normalize();
-                }
-            }
-
-            Vector3d p1 = p0.add(forward.multiply(dist / 3.0));
-            Vector3d toEnd = p3.subtract(p0).normalize();
-            Vector3d p2 = p3.subtract(toEnd.multiply(dist / 3.0));
-            p1 = new Vector3d(p1.x, p0.y + (p3.y - p0.y) / 3.0, p1.z);
-            p2 = new Vector3d(p2.x, p0.y + 2.0 * (p3.y - p0.y) / 3.0, p2.z);
-
-            curves.add(new BezierCurve3D(p0, p1, p2, p3));
+    public void updatePreviewCurves() {
+        if (!editModeActive || chainedPoints.size() < 2) {
+            ClientGraphCache.getInstance().clearPreview();
+            return;
         }
 
+        List<BezierCurve3D> curves = generateCurvesFromChain(chainedPoints, chainedNodeIds);
         ClientGraphCache.getInstance().setPreviewCurves(curves);
+        ClientGraphCache.getInstance().markPreviewDirty();
+    }
+
+    /**
+     * Standard Catmull-Rom to Cubic Bezier conversion for a chain of points.
+     * Guarantees smooth C1-continuity without bulges or waves (Bug 7).
+     * Connects collinear tangents to existing nodes at both start and end (Bug 13).
+     */
+    public static List<BezierCurve3D> generateCurvesFromChain(List<Vector3d> points, List<UUID> nodeIds) {
+        int n = points.size();
+        if (n < 2) {
+            return Collections.emptyList();
+        }
+
+        Vector3d[] tangents = new Vector3d[n];
+
+        // 1. Internal tangents: T_i = (P_{i+1} - P_{i-1}) / 2
+        for (int i = 1; i < n - 1; i++) {
+            tangents[i] = points.get(i + 1).subtract(points.get(i - 1)).multiply(0.5);
+        }
+
+        // 2. Start tangent: T_0 = P_1 - P_0 (or aligned tangent from attached start node)
+        UUID startId = (!nodeIds.isEmpty()) ? nodeIds.get(0) : null;
+        RoadNode existingStart = (startId != null) ? ClientGraphCache.getInstance().getGraph().getNode(startId) : null;
+        Vector3d dirFromStart = points.get(1).subtract(points.get(0));
+        double firstDist = dirFromStart.length();
+
+        if (existingStart != null && existingStart.getTangent() != null && existingStart.getTangent().lengthSquared() > 0.01) {
+            Vector3d nodeTang = existingStart.getTangent();
+            if (nodeTang.dot(dirFromStart) < 0) {
+                nodeTang = nodeTang.multiply(-1.0);
+            }
+            tangents[0] = nodeTang.normalize().multiply(firstDist);
+        } else {
+            tangents[0] = dirFromStart;
+        }
+
+        // 3. End tangent: T_{N-1} = P_{N-1} - P_{N-2} (or aligned tangent from attached end node) (Bug 13)
+        UUID endId = (nodeIds.size() >= n) ? nodeIds.get(n - 1) : null;
+        RoadNode existingEnd = (endId != null) ? ClientGraphCache.getInstance().getGraph().getNode(endId) : null;
+        Vector3d dirToEnd = points.get(n - 1).subtract(points.get(n - 2));
+        double lastDist = dirToEnd.length();
+
+        if (existingEnd != null && existingEnd.getTangent() != null && existingEnd.getTangent().lengthSquared() > 0.01) {
+            Vector3d nodeTang = existingEnd.getTangent();
+            if (nodeTang.dot(dirToEnd) < 0) {
+                nodeTang = nodeTang.multiply(-1.0);
+            }
+            tangents[n - 1] = nodeTang.normalize().multiply(lastDist);
+        } else {
+            tangents[n - 1] = dirToEnd;
+        }
+
+        // 4. Construct cubic Bezier curves for each segment
+        List<BezierCurve3D> curves = new ArrayList<>(n - 1);
+        for (int i = 0; i < n - 1; i++) {
+            Vector3d pStart = points.get(i);
+            Vector3d pEnd = points.get(i + 1);
+            double dist = pStart.distanceTo(pEnd);
+            if (dist < 1e-6) continue;
+
+            Vector3d tA = tangents[i];
+            Vector3d tB = tangents[i + 1];
+
+            // Clamp tangent lengths so they don't exceed segment distance L
+            if (tA.length() > dist) {
+                tA = tA.normalize().multiply(dist);
+            }
+            if (tB.length() > dist) {
+                tB = tB.normalize().multiply(dist);
+            }
+
+            Vector3d c1 = pStart.add(tA.multiply(1.0 / 3.0));
+            Vector3d c2 = pEnd.subtract(tB.multiply(1.0 / 3.0));
+
+            // Linear Y elevation to eliminate vertical overshoots
+            c1 = new Vector3d(c1.x, pStart.y + (pEnd.y - pStart.y) / 3.0, c1.z);
+            c2 = new Vector3d(c2.x, pStart.y + 2.0 * (pEnd.y - pStart.y) / 3.0, c2.z);
+
+            curves.add(new BezierCurve3D(pStart, c1, c2, pEnd));
+        }
+
+        return curves;
     }
 
     public void handleLeftClick(NodeRaycaster.RaycastResult raycast) {
@@ -170,8 +231,9 @@ public final class EditModeManager {
             chainedPoints.add(clickedPos);
             chainedNodeIds.add(nodeId);
             selectedPointIndex = 0;
+            updatePreviewCurves();
             if (mc.player != null) {
-                mc.player.displayClientMessage(Component.literal("§eТочка #1 поставлена. Кликайте дальше или нажмите ENTER для постройки!"), true);
+                mc.player.displayClientMessage(Component.translatable("roadbuilder.message.point_first_placed"), true);
             }
         } else {
             Vector3d lastPt = chainedPoints.get(chainedPoints.size() - 1);
@@ -183,9 +245,10 @@ public final class EditModeManager {
             chainedPoints.add(clickedPos);
             chainedNodeIds.add(nodeId);
             selectedPointIndex = chainedPoints.size() - 1;
+            updatePreviewCurves();
 
             if (mc.player != null) {
-                mc.player.displayClientMessage(Component.literal("§eТочка #" + chainedPoints.size() + " добавлена."), true);
+                mc.player.displayClientMessage(Component.translatable("roadbuilder.message.point_added", chainedPoints.size()), true);
             }
         }
     }
@@ -198,7 +261,7 @@ public final class EditModeManager {
         if (closestIdx >= 0) {
             selectedPointIndex = closestIdx;
             if (mc.player != null) {
-                mc.player.displayClientMessage(Component.literal("§aВыбрана точка #" + (closestIdx + 1) + ". Колесо мыши меняет высоту!"), true);
+                mc.player.displayClientMessage(Component.translatable("roadbuilder.message.point_selected", (closestIdx + 1)), true);
             }
         }
     }
@@ -212,7 +275,7 @@ public final class EditModeManager {
             if (closestIdx >= 0) {
                 removePoint(closestIdx);
                 if (mc.player != null) {
-                    mc.player.displayClientMessage(Component.literal("§cУдалена точка #" + (closestIdx + 1) + ". Осталось: " + chainedPoints.size()), true);
+                    mc.player.displayClientMessage(Component.translatable("roadbuilder.message.point_deleted", (closestIdx + 1), chainedPoints.size()), true);
                 }
                 return;
             }
@@ -221,7 +284,7 @@ public final class EditModeManager {
         // Otherwise delete last point
         removePoint(chainedPoints.size() - 1);
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal("§cУдалена последняя точка. Осталось: " + chainedPoints.size()), true);
+            mc.player.displayClientMessage(Component.translatable("roadbuilder.message.last_point_deleted", chainedPoints.size()), true);
         }
     }
 
@@ -240,12 +303,15 @@ public final class EditModeManager {
 
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal(String.format("§bТочка #%d: [X: %.1f, Y: %.1f, Z: %.1f]",
-                    (selectedPointIndex + 1), newPt.x, newPt.y, newPt.z)), true);
+            mc.player.displayClientMessage(Component.translatable("roadbuilder.message.point_coords",
+                    (selectedPointIndex + 1),
+                    String.format(java.util.Locale.US, "%.1f", newPt.x),
+                    String.format(java.util.Locale.US, "%.1f", newPt.y),
+                    String.format(java.util.Locale.US, "%.1f", newPt.z)), true);
         }
 
         // Recompute preview immediately
-        updatePreview(new NodeRaycaster.RaycastResult(Optional.empty(), Optional.empty()));
+        updatePreviewCurves();
     }
 
     public void removePoint(int index) {
@@ -257,6 +323,8 @@ public final class EditModeManager {
             }
             if (chainedPoints.isEmpty()) {
                 cancelCurrentOperation();
+            } else {
+                updatePreviewCurves();
             }
         }
     }
@@ -281,41 +349,17 @@ public final class EditModeManager {
         }
 
         Minecraft mc = Minecraft.getInstance();
+        List<BezierCurve3D> curves = generateCurvesFromChain(chainedPoints, chainedNodeIds);
 
-        for (int i = 0; i < chainedPoints.size() - 1; i++) {
-            Vector3d p0 = chainedPoints.get(i);
-            Vector3d p3 = chainedPoints.get(i + 1);
+        for (int i = 0; i < curves.size(); i++) {
+            BezierCurve3D curve = curves.get(i);
             UUID startNodeId = chainedNodeIds.get(i);
-            UUID endNodeId = chainedNodeIds.get(i + 1);
-
-            double dist = p0.distanceTo(p3);
-            Vector3d forward;
-            if (i > 0) {
-                Vector3d prevPt = chainedPoints.get(i - 1);
-                forward = p0.subtract(prevPt).normalize();
-            } else {
-                RoadNode existingStart = (startNodeId != null) ? ClientGraphCache.getInstance().getGraph().getNode(startNodeId) : null;
-                if (existingStart != null && existingStart.getTangent() != null && existingStart.getTangent().lengthSquared() > 0.01) {
-                    Vector3d nodeTang = existingStart.getTangent();
-                    Vector3d dirToEnd = p3.subtract(p0).normalize();
-                    forward = (nodeTang.dot(dirToEnd) >= 0) ? nodeTang : nodeTang.multiply(-1.0);
-                } else {
-                    forward = p3.subtract(p0).normalize();
-                }
-            }
-
-            Vector3d p1 = p0.add(forward.multiply(dist / 3.0));
-            Vector3d toEnd = p3.subtract(p0).normalize();
-            Vector3d p2 = p3.subtract(toEnd.multiply(dist / 3.0));
-            p1 = new Vector3d(p1.x, p0.y + (p3.y - p0.y) / 3.0, p1.z);
-            p2 = new Vector3d(p2.x, p0.y + 2.0 * (p3.y - p0.y) / 3.0, p2.z);
-
-            BezierCurve3D curve = new BezierCurve3D(p0, p1, p2, p3);
+            UUID endNodeId = (i + 1 < chainedNodeIds.size()) ? chainedNodeIds.get(i + 1) : null;
             ClientInputHandler.sendBuildRequest(curve, startNodeId, endNodeId);
         }
 
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal("§a[RoadBuilder] Дорога (" + (chainedPoints.size() - 1) + " сегментов) построена!"), true);
+            mc.player.displayClientMessage(Component.translatable("roadbuilder.message.road_built", curves.size()), true);
         }
 
         cancelCurrentOperation();

@@ -79,9 +79,9 @@ public final class RoadEditorOverlay {
         String statusText;
         if (currentTool == EditTool.ADJUST_POINT) {
             if (selectedPointIdx >= 0) {
-                statusText = "§b[Колесо мыши/PgUp/PgDn] §fВысота Y §7| §e[Стрелочки] §fОси X/Z (+Shift ×5)";
+                statusText = net.minecraft.network.chat.Component.translatable("roadbuilder.overlay.adjust_active").getString();
             } else {
-                statusText = "§eКликните ЛКМ по точке, чтобы появились оси перемещения!";
+                statusText = net.minecraft.network.chat.Component.translatable("roadbuilder.overlay.adjust_hint").getString();
             }
         } else {
             statusText = currentTool.getDescription();
@@ -94,7 +94,7 @@ public final class RoadEditorOverlay {
 
         // Chain point counter & shortcuts guide on the side
         int count = manager.getChainedPoints().size();
-        String counterText = "§aТочек: §f" + count + " §7| §eENTER§7: Построить | §cПКМ§7: Сброс | §bCtrl+Z§7: Отмена";
+        String counterText = net.minecraft.network.chat.Component.translatable("roadbuilder.overlay.status_bar", count).getString();
         int counterWidth = mc.font.width(counterText);
         int counterX = (screenWidth - counterWidth) / 2;
         guiGraphics.drawString(mc.font, counterText, counterX, startY + slotHeight + 22, 0xFFD8DEE9, true);

@@ -17,22 +17,26 @@ public class ModularRoadPreset {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     public enum Mode {
-        AUTO("Авто"),
-        ALWAYS("Всегда"),
-        OFF("Выкл");
+        AUTO("auto"),
+        ALWAYS("always"),
+        OFF("off");
 
-        private final String label;
-        Mode(String label) { this.label = label; }
-        public String getLabel() { return label; }
+        private final String keySuffix;
+        Mode(String keySuffix) { this.keySuffix = keySuffix; }
+        public String getLabel() {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.mode." + keySuffix).getString();
+        }
     }
 
     public enum ToggleMode {
-        AUTO("Авто"),
-        OFF("Выкл");
+        AUTO("auto"),
+        OFF("off");
 
-        private final String label;
-        ToggleMode(String label) { this.label = label; }
-        public String getLabel() { return label; }
+        private final String keySuffix;
+        ToggleMode(String keySuffix) { this.keySuffix = keySuffix; }
+        public String getLabel() {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.mode." + keySuffix).getString();
+        }
     }
 
     private String id;
@@ -79,7 +83,7 @@ public class ModularRoadPreset {
     }
 
     public static ModularRoadPreset createSingleLane() {
-        ModularRoadPreset preset = new ModularRoadPreset("single_lane", "Сельская 1-полосная");
+        ModularRoadPreset preset = new ModularRoadPreset("single_lane", "Rural 1-lane");
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 5)); // 5 blocks for single lane!
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
@@ -87,7 +91,7 @@ public class ModularRoadPreset {
     }
 
     public static ModularRoadPreset createHighway() {
-        ModularRoadPreset preset = new ModularRoadPreset("highway_4lane", "Магистраль 4 полосы");
+        ModularRoadPreset preset = new ModularRoadPreset("highway_4lane", "Highway 4-lane");
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_SHORT, 1));
@@ -108,6 +112,16 @@ public class ModularRoadPreset {
         return Math.max(1, w);
     }
 
+    public int getRoadwayWidth() {
+        int w = 0;
+        for (RoadStackElement elem : stack) {
+            if (elem.getType() != RoadElementType.SIDEWALK && elem.getType() != RoadElementType.SHOULDER) {
+                w += elem.getWidth();
+            }
+        }
+        return w;
+    }
+
     public int getLaneCount() {
         int count = 0;
         for (RoadStackElement elem : stack) {
@@ -123,6 +137,17 @@ public class ModularRoadPreset {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getDisplayName() {
+        if ("default".equals(id)) {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.default").getString();
+        } else if ("single_lane".equals(id)) {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.single_lane").getString();
+        } else if ("highway_4lane".equals(id)) {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.highway_4lane").getString();
+        }
+        return name;
+    }
 
     public List<RoadStackElement> getStack() { return stack; }
     public void setStack(List<RoadStackElement> stack) { this.stack = stack; }

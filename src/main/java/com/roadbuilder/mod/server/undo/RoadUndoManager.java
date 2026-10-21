@@ -43,7 +43,7 @@ public final class RoadUndoManager {
 
     public static synchronized boolean undoLast(ServerPlayer player) {
         if (UNDO_STACK.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§c[RoadBuilder] Нет дорог для отмены!"));
+            player.sendSystemMessage(Component.translatable("roadbuilder.message.undo_empty"));
             return false;
         }
 
@@ -74,7 +74,10 @@ public final class RoadUndoManager {
         // 4. Sync full graph to all players in dimension
         PacketDistributor.sendToPlayersInDimension(level, S2C_SyncFullGraphPayload.fromGraph(savedData.getGraph()));
 
-        player.sendSystemMessage(Component.literal("§a[RoadBuilder] Успешно отменено строительство дороги! Восстановлено " + entry.previousBlocks().size() + " блоков."));
+        player.sendSystemMessage(Component.translatable(
+                "roadbuilder.message.undo_success",
+                entry.previousBlocks().size()
+        ));
         return true;
     }
 }
