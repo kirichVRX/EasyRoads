@@ -82,25 +82,43 @@ public class ModularRoadPreset {
         return preset;
     }
 
-    public static ModularRoadPreset createSingleLane() {
-        ModularRoadPreset preset = new ModularRoadPreset("single_lane", "Rural 1-lane");
+    public static ModularRoadPreset createCountryRoad() {
+        ModularRoadPreset preset = new ModularRoadPreset("country_road", "Сountry road");
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
-        preset.stack.add(new RoadStackElement(RoadElementType.LANE, 5)); // 5 blocks for single lane!
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
+        preset.stack.add(new RoadStackElement(RoadElementType.MARKING_SOLID, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
+        preset.viaductMode = Mode.AUTO;
+        preset.tunnelMode = Mode.AUTO;
+        preset.slopeMode = ToggleMode.AUTO;
+        preset.embankmentMode = ToggleMode.AUTO;
         return preset;
     }
 
+    public static ModularRoadPreset createSingleLane() {
+        return createCountryRoad();
+    }
+
     public static ModularRoadPreset createHighway() {
-        ModularRoadPreset preset = new ModularRoadPreset("highway_4lane", "Highway 4-lane");
-        preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
+        ModularRoadPreset preset = new ModularRoadPreset("highway", "Highway");
+        preset.stack.add(new RoadStackElement(RoadElementType.SIDEWALK, 4));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_SHORT, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_LONG, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.DIVIDER_GRASS, 5));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_SHORT, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_LONG, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.SIDEWALK, 4));
+        preset.viaductMode = Mode.AUTO;
+        preset.tunnelMode = Mode.AUTO;
+        preset.slopeMode = ToggleMode.AUTO;
+        preset.embankmentMode = ToggleMode.AUTO;
         return preset;
     }
 
@@ -141,10 +159,10 @@ public class ModularRoadPreset {
     public String getDisplayName() {
         if ("default".equals(id)) {
             return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.default").getString();
-        } else if ("single_lane".equals(id)) {
-            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.single_lane").getString();
-        } else if ("highway_4lane".equals(id)) {
-            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.highway_4lane").getString();
+        } else if ("country_road".equals(id) || "single_lane".equals(id) || "preset_1792686083438".equals(id)) {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.country_road").getString();
+        } else if ("highway".equals(id) || "highway_4lane".equals(id) || "preset_1792686213892".equals(id)) {
+            return net.minecraft.network.chat.Component.translatable("roadbuilder.preset.highway").getString();
         }
         return name;
     }

@@ -71,8 +71,10 @@
 
   "roadbuilder.pack.default": "Standard (Vanilla)",
   "roadbuilder.preset.default": "Default (Standard)",
-  "roadbuilder.preset.single_lane": "Rural 1-lane",
-  "roadbuilder.preset.highway_4lane": "Highway 4-lane",
+  "roadbuilder.preset.country_road": "Country Road",
+  "roadbuilder.preset.highway": "Highway",
+  "roadbuilder.preset.single_lane": "Country Road",
+  "roadbuilder.preset.highway_4lane": "Highway",
   "roadbuilder.preset.copy_suffix": "(copy)",
   "roadbuilder.preset.new_name": "Preset %s"
 }

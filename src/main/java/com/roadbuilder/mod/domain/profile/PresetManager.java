@@ -34,11 +34,11 @@ public final class PresetManager {
 
     private void initDefaults() {
         ModularRoadPreset def = ModularRoadPreset.createDefault();
-        ModularRoadPreset single = ModularRoadPreset.createSingleLane();
+        ModularRoadPreset country = ModularRoadPreset.createCountryRoad();
         ModularRoadPreset high = ModularRoadPreset.createHighway();
 
         presets.put(def.getId(), def);
-        presets.put(single.getId(), single);
+        presets.put(country.getId(), country);
         presets.put(high.getId(), high);
     }
 

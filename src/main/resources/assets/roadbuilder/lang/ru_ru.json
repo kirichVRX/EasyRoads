@@ -71,8 +71,10 @@
 
   "roadbuilder.pack.default": "Стандартный (Vanilla)",
   "roadbuilder.preset.default": "Стандартный",
-  "roadbuilder.preset.single_lane": "Сельский 1-полосный",
-  "roadbuilder.preset.highway_4lane": "Магистраль 4 полосы",
+  "roadbuilder.preset.country_road": "Загородная дорога",
+  "roadbuilder.preset.highway": "Магистраль",
+  "roadbuilder.preset.single_lane": "Загородная дорога",
+  "roadbuilder.preset.highway_4lane": "Магистраль",
   "roadbuilder.preset.copy_suffix": "(копия)",
   "roadbuilder.preset.new_name": "Пресет %s"
 }

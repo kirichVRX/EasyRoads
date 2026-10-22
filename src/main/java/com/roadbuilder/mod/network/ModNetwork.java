@@ -26,7 +26,7 @@ public final class ModNetwork {
     private static void onRegisterPayloadHandlers(final RegisterPayloadHandlersEvent event) {
         RoadBuilderMod.LOGGER.info("[RoadBuilder] Registering network payloads...");
 
-        final PayloadRegistrar registrar = event.registrar(RoadBuilderMod.MOD_ID).versioned("0.5.0");
+        final PayloadRegistrar registrar = event.registrar(RoadBuilderMod.MOD_ID).versioned("0.7");
 
         // C2S
         registrar.playToServer(
