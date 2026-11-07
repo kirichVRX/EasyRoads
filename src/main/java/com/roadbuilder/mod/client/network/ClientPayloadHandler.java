@@ -3,6 +3,7 @@ package com.roadbuilder.mod.client.network;
 import com.roadbuilder.mod.client.cache.ClientGraphCache;
 import com.roadbuilder.mod.core.RoadBuilderMod;
 import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
+import com.roadbuilder.mod.domain.graph.NodeType;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
 import com.roadbuilder.mod.domain.graph.RoadNode;
 import com.roadbuilder.mod.domain.profile.RoadProfile;
@@ -18,12 +19,18 @@ public final class ClientPayloadHandler {
     private ClientPayloadHandler() {}
 
     public static void handleSyncSegment(final S2C_SyncRoadSegmentPayload payload) {
-        RoadNode nodeA = new RoadNode(payload.nodeAId(), payload.nodeAPos(), payload.nodeATangent());
-        RoadNode nodeB = new RoadNode(payload.nodeBId(), payload.nodeBPos(), payload.nodeBTangent());
+        RoadNode nodeA = new RoadNode(
+                payload.nodeAId(), payload.nodeAPos(), payload.nodeATangent(),
+                NodeType.fromString(payload.nodeAType()), payload.nodeAPresetId(), payload.nodeARadius()
+        );
+        RoadNode nodeB = new RoadNode(
+                payload.nodeBId(), payload.nodeBPos(), payload.nodeBTangent(),
+                NodeType.fromString(payload.nodeBType()), payload.nodeBPresetId(), payload.nodeBRadius()
+        );
 
         BezierCurve3D curve = new BezierCurve3D(payload.p0(), payload.p1(), payload.p2(), payload.p3());
-        RoadProfile profile = RoadProfile.createDefault();
-        RoadEdge edge = new RoadEdge(payload.edgeId(), payload.nodeAId(), payload.nodeBId(), curve, profile);
+        RoadProfile profile = RoadProfile.createDefault().withName(payload.profileName()).withWidth(payload.profileWidth());
+        RoadEdge edge = new RoadEdge(payload.edgeId(), payload.nodeAId(), payload.nodeBId(), curve, profile, payload.presetId(), payload.moduleCurves());
 
         ClientGraphCache cache = ClientGraphCache.getInstance();
         cache.getGraph().addNode(nodeA);
@@ -39,14 +46,17 @@ public final class ClientPayloadHandler {
         cache.clear();
 
         for (S2C_SyncFullGraphPayload.RoadNodeData nodeData : payload.nodes()) {
-            RoadNode node = new RoadNode(nodeData.id(), nodeData.position(), nodeData.tangent());
+            RoadNode node = new RoadNode(
+                    nodeData.id(), nodeData.position(), nodeData.tangent(),
+                    NodeType.fromString(nodeData.nodeType()), nodeData.presetId(), nodeData.radius(), nodeData.junctionStyle()
+            );
             cache.getGraph().addNode(node);
         }
 
         for (S2C_SyncFullGraphPayload.RoadEdgeData edgeData : payload.edges()) {
             BezierCurve3D curve = new BezierCurve3D(edgeData.p0(), edgeData.p1(), edgeData.p2(), edgeData.p3());
-            RoadProfile profile = RoadProfile.createDefault();
-            RoadEdge edge = new RoadEdge(edgeData.id(), edgeData.nodeAId(), edgeData.nodeBId(), curve, profile);
+            RoadProfile profile = RoadProfile.createDefault().withName(edgeData.profileName()).withWidth(edgeData.width());
+            RoadEdge edge = new RoadEdge(edgeData.id(), edgeData.nodeAId(), edgeData.nodeBId(), curve, profile, edgeData.presetId(), edgeData.moduleCurves());
             cache.getGraph().addEdge(edge);
         }
 

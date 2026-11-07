@@ -3,6 +3,7 @@ package com.roadbuilder.mod.client.editmode;
 import com.roadbuilder.mod.client.cache.ClientGraphCache;
 import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
+import com.roadbuilder.mod.domain.graph.RoadEdge;
 import com.roadbuilder.mod.domain.graph.RoadNode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -32,6 +33,12 @@ public final class EditModeManager {
     private final List<UUID> chainedNodeIds = new ArrayList<>();
     private int selectedPointIndex = -1;
 
+    // Move existing node state
+    private UUID movingNodeId = null;
+    private Vector3d originalNodePos = null;
+    private Vector3d targetNodePos = null;
+    private double movingHeightOffset = 0.0;
+
     private EditModeManager() {}
 
     public static EditModeManager getInstance() {
@@ -46,8 +53,79 @@ public final class EditModeManager {
         return currentTool;
     }
 
+    public UUID getMovingNodeId() {
+        return movingNodeId;
+    }
+
+    public Vector3d getOriginalNodePos() {
+        return originalNodePos;
+    }
+
+    public Vector3d getTargetNodePos() {
+        return targetNodePos;
+    }
+
+    public void adjustMovingNodeHeight(double deltaY) {
+        if (movingNodeId == null || targetNodePos == null) return;
+        movingHeightOffset += deltaY;
+        targetNodePos = new Vector3d(targetNodePos.x, targetNodePos.y + deltaY, targetNodePos.z);
+        updateMovingNodePreview();
+    }
+
+    public void cancelNodeMove() {
+        movingNodeId = null;
+        originalNodePos = null;
+        targetNodePos = null;
+        movingHeightOffset = 0.0;
+        ClientGraphCache.getInstance().clearPreview();
+    }
+
+    // Active editor panel (Build / Edit)
+    public enum EditorPanel {
+        BUILD("build", EditTool.ADD_POINT, EditTool.SELECT_POINT, EditTool.ADJUST_POINT, EditTool.DELETE_POINT),
+        EDIT("edit", EditTool.MOVE_EXISTING_NODE, EditTool.DELETE_EDGE, EditTool.EDIT_EXISTING_EDGE, EditTool.CREATE_ROUNDABOUT);
+
+        private final String name;
+        private final EditTool[] tools;
+
+        EditorPanel(String name, EditTool... tools) {
+            this.name = name;
+            this.tools = tools;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public EditTool[] getTools() {
+            return tools;
+        }
+    }
+
+    private EditorPanel activePanel = EditorPanel.BUILD;
+
+    public EditorPanel getActivePanel() {
+        return activePanel;
+    }
+
+    public void setActivePanel(EditorPanel panel) {
+        if (panel != null && this.activePanel != panel) {
+            this.activePanel = panel;
+            setCurrentTool(panel.getTools()[0]);
+        }
+    }
+
+    public void togglePanel() {
+        setActivePanel(activePanel == EditorPanel.BUILD ? EditorPanel.EDIT : EditorPanel.BUILD);
+    }
+
     public void setCurrentTool(EditTool tool) {
         this.currentTool = tool;
+        if (tool == EditTool.MOVE_EXISTING_NODE || tool == EditTool.DELETE_EDGE || tool == EditTool.EDIT_EXISTING_EDGE || tool == EditTool.CREATE_ROUNDABOUT) {
+            this.activePanel = EditorPanel.EDIT;
+        } else {
+            this.activePanel = EditorPanel.BUILD;
+        }
         updatePreviewCurves();
         ClientGraphCache.getInstance().markPreviewDirty();
         Minecraft mc = Minecraft.getInstance();
@@ -86,7 +164,21 @@ public final class EditModeManager {
     }
 
     public void updatePreview(NodeRaycaster.RaycastResult raycast) {
-        if (!editModeActive || chainedPoints.isEmpty()) {
+        if (!editModeActive) {
+            ClientGraphCache.getInstance().clearPreview();
+            return;
+        }
+
+        if (currentTool == EditTool.MOVE_EXISTING_NODE && movingNodeId != null) {
+            if (raycast.worldPosition().isPresent()) {
+                Vector3d cursor = raycast.worldPosition().get();
+                targetNodePos = new Vector3d(cursor.x, cursor.y + movingHeightOffset, cursor.z);
+                updateMovingNodePreview();
+            }
+            return;
+        }
+
+        if (chainedPoints.isEmpty()) {
             ClientGraphCache.getInstance().clearPreview();
             return;
         }
@@ -111,6 +203,41 @@ public final class EditModeManager {
         // Update lightweight ribbon curves without marking previewDirty (avoids per-frame voxel recalculation)
         ClientGraphCache.getInstance().getPreviewCurves().clear();
         ClientGraphCache.getInstance().getPreviewCurves().addAll(curves);
+    }
+
+    public void updateMovingNodePreview() {
+        if (movingNodeId == null || targetNodePos == null) return;
+        RoadNode node = ClientGraphCache.getInstance().getGraph().getNode(movingNodeId);
+        if (node == null) return;
+
+        List<BezierCurve3D> previewCurves = new ArrayList<>();
+        for (UUID edgeId : node.getConnectedEdgeIds()) {
+            com.roadbuilder.mod.domain.graph.RoadEdge edge = ClientGraphCache.getInstance().getGraph().getEdge(edgeId);
+            if (edge == null) continue;
+            UUID otherId = edge.getNodeAId().equals(movingNodeId) ? edge.getNodeBId() : edge.getNodeAId();
+            RoadNode otherNode = ClientGraphCache.getInstance().getGraph().getNode(otherId);
+            if (otherNode != null) {
+                Vector3d pStart = otherNode.getPosition();
+                Vector3d pEnd = targetNodePos;
+                Vector3d dir = pEnd.subtract(pStart);
+                double dist = dir.length();
+                if (dist > 0.1) {
+                    Vector3d tA = otherNode.getTangent();
+                    if (tA == null || tA.lengthSquared() < 0.01) {
+                        tA = dir.normalize();
+                    } else if (tA.dot(dir) < 0) {
+                        tA = tA.multiply(-1.0).normalize();
+                    }
+                    Vector3d c1 = pStart.add(tA.multiply(dist / 3.0));
+                    Vector3d c2 = pEnd.subtract(dir.normalize().multiply(dist / 3.0));
+                    c1 = new Vector3d(c1.x, pStart.y + (pEnd.y - pStart.y) / 3.0, c1.z);
+                    c2 = new Vector3d(c2.x, pStart.y + 2.0 * (pEnd.y - pStart.y) / 3.0, c2.z);
+                    previewCurves.add(new BezierCurve3D(pStart, c1, c2, pEnd));
+                }
+            }
+        }
+        ClientGraphCache.getInstance().getPreviewCurves().clear();
+        ClientGraphCache.getInstance().getPreviewCurves().addAll(previewCurves);
     }
 
     public void updatePreviewCurves() {
@@ -217,6 +344,10 @@ public final class EditModeManager {
             case ADD_POINT -> handleAddPointClick(raycast, mc);
             case SELECT_POINT, ADJUST_POINT -> handleSelectPointClick(raycast, mc);
             case DELETE_POINT -> handleDeletePointClick(raycast, mc);
+            case DELETE_EDGE -> handleDeleteEdgeClick(mc);
+            case MOVE_EXISTING_NODE -> handleMoveNodeClick(raycast, mc);
+            case EDIT_EXISTING_EDGE -> handleEditEdgeClick(mc);
+            case CREATE_ROUNDABOUT -> handleCreateRoundaboutClick(raycast, mc);
         }
     }
 
@@ -267,7 +398,18 @@ public final class EditModeManager {
     }
 
     private void handleDeletePointClick(NodeRaycaster.RaycastResult raycast, Minecraft mc) {
-        if (chainedPoints.isEmpty()) return;
+        if (chainedPoints.isEmpty()) {
+            if (raycast.hoveredNode().isPresent()) {
+                UUID nodeId = raycast.hoveredNode().get().getId();
+                net.neoforged.neoforge.network.PacketDistributor.sendToServer(
+                        new com.roadbuilder.mod.network.payload.C2S_DeleteNodePayload(nodeId)
+                );
+                if (mc.player != null) {
+                    mc.player.displayClientMessage(Component.translatable("roadbuilder.message.deleting_node"), true);
+                }
+            }
+            return;
+        }
 
         if (raycast.worldPosition().isPresent()) {
             Vector3d click = raycast.worldPosition().get();
@@ -285,6 +427,90 @@ public final class EditModeManager {
         removePoint(chainedPoints.size() - 1);
         if (mc.player != null) {
             mc.player.displayClientMessage(Component.translatable("roadbuilder.message.last_point_deleted", chainedPoints.size()), true);
+        }
+    }
+
+    private void handleDeleteEdgeClick(Minecraft mc) {
+        Optional<EdgeRaycaster.EdgeHitResult> edgeHit = EdgeRaycaster.findEdgeUnderCursor();
+        if (edgeHit.isPresent()) {
+            UUID edgeId = edgeHit.get().edgeId();
+            net.neoforged.neoforge.network.PacketDistributor.sendToServer(
+                    new com.roadbuilder.mod.network.payload.C2S_DeleteEdgePayload(edgeId)
+            );
+            if (mc.player != null) {
+                mc.player.displayClientMessage(Component.translatable("roadbuilder.message.deleting_edge"), true);
+            }
+        }
+    }
+
+    private void handleMoveNodeClick(NodeRaycaster.RaycastResult raycast, Minecraft mc) {
+        if (movingNodeId == null) {
+            // First click: select and capture existing node under cursor
+            if (raycast.hoveredNode().isPresent()) {
+                RoadNode node = raycast.hoveredNode().get();
+                movingNodeId = node.getId();
+                originalNodePos = node.getPosition();
+                targetNodePos = node.getPosition();
+                movingHeightOffset = 0.0;
+                updateMovingNodePreview();
+                if (mc.player != null) {
+                    mc.player.displayClientMessage(Component.translatable("roadbuilder.message.node_grabbed"), true);
+                }
+            }
+        } else {
+            // Second click: confirm new position and send payload to server
+            Vector3d finalPos = (targetNodePos != null) ? targetNodePos : originalNodePos;
+            net.neoforged.neoforge.network.PacketDistributor.sendToServer(
+                    new com.roadbuilder.mod.network.payload.C2S_MoveNodePayload(movingNodeId, finalPos)
+            );
+            if (mc.player != null) {
+                mc.player.displayClientMessage(Component.translatable("roadbuilder.message.node_moving"), true);
+            }
+            cancelNodeMove();
+        }
+    }
+
+    private void handleEditEdgeClick(Minecraft mc) {
+        Optional<EdgeRaycaster.EdgeHitResult> hit = EdgeRaycaster.findEdgeUnderCursor();
+        if (hit.isPresent()) {
+            UUID edgeId = hit.get().edgeId();
+            RoadEdge edge = ClientGraphCache.getInstance().getGraph().getEdge(edgeId);
+            if (edge != null) {
+                List<com.roadbuilder.mod.domain.profile.ModularRoadPreset> allPresets =
+                        new ArrayList<>(com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getAllPresets());
+                if (!allPresets.isEmpty()) {
+                    int curIdx = -1;
+                    for (int i = 0; i < allPresets.size(); i++) {
+                        if (allPresets.get(i).getId().equals(edge.getPresetId())) {
+                            curIdx = i;
+                            break;
+                        }
+                    }
+                    int nextIdx = (curIdx + 1) % allPresets.size();
+                    com.roadbuilder.mod.domain.profile.ModularRoadPreset nextPreset = allPresets.get(nextIdx);
+                    net.neoforged.neoforge.network.PacketDistributor.sendToServer(
+                            new com.roadbuilder.mod.network.payload.C2S_ChangeEdgePresetPayload(edgeId, nextPreset.getId())
+                    );
+                    if (mc.player != null) {
+                        mc.player.displayClientMessage(Component.translatable("roadbuilder.message.preset_changed", nextPreset.getDisplayName()), true);
+                    }
+                }
+            }
+        }
+    }
+
+    private void handleCreateRoundaboutClick(NodeRaycaster.RaycastResult raycast, Minecraft mc) {
+        if (raycast.hoveredNode().isPresent()) {
+            RoadNode node = raycast.hoveredNode().get();
+            mc.setScreen(new com.roadbuilder.mod.client.gui.RoundaboutConfigScreen(node));
+            return;
+        }
+
+        if (raycast.worldPosition().isPresent()) {
+            Vector3d pos = raycast.worldPosition().get();
+            mc.setScreen(new com.roadbuilder.mod.client.gui.RoundaboutConfigScreen(
+                    UUID.randomUUID(), pos, 12.0, 5.0, 2, "default"
+            ));
         }
     }
 
@@ -369,6 +595,7 @@ public final class EditModeManager {
         chainedPoints.clear();
         chainedNodeIds.clear();
         selectedPointIndex = -1;
+        cancelNodeMove();
         ClientGraphCache.getInstance().clearPreview();
     }
 

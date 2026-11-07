@@ -10,7 +10,11 @@ public enum EditTool {
     ADD_POINT("add"),
     SELECT_POINT("select"),
     ADJUST_POINT("adjust"),
-    DELETE_POINT("delete");
+    DELETE_POINT("delete"),
+    DELETE_EDGE("delete_edge"),
+    MOVE_EXISTING_NODE("move"),
+    EDIT_EXISTING_EDGE("edit_edge"),
+    CREATE_ROUNDABOUT("roundabout");
 
     private final String iconName;
     private final ResourceLocation iconLocation;

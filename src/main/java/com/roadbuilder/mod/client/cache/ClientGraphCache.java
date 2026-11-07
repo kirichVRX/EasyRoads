@@ -22,6 +22,8 @@ public final class ClientGraphCache {
 
     private UUID hoveredNodeId = null;
     private UUID selectedNodeId = null;
+    private UUID hoveredEdgeId = null;
+    private UUID selectedEdgeId = null;
 
     private final java.util.List<BezierCurve3D> previewCurves = new java.util.ArrayList<>();
     private RoadProfile activeProfile = RoadProfile.createDefault();
@@ -53,6 +55,22 @@ public final class ClientGraphCache {
 
     public void setSelectedNodeId(UUID selectedNodeId) {
         this.selectedNodeId = selectedNodeId;
+    }
+
+    public UUID getHoveredEdgeId() {
+        return hoveredEdgeId;
+    }
+
+    public void setHoveredEdgeId(UUID hoveredEdgeId) {
+        this.hoveredEdgeId = hoveredEdgeId;
+    }
+
+    public UUID getSelectedEdgeId() {
+        return selectedEdgeId;
+    }
+
+    public void setSelectedEdgeId(UUID selectedEdgeId) {
+        this.selectedEdgeId = selectedEdgeId;
     }
 
     public java.util.List<BezierCurve3D> getPreviewCurves() {
@@ -103,6 +121,8 @@ public final class ClientGraphCache {
         graph.clear();
         hoveredNodeId = null;
         selectedNodeId = null;
+        hoveredEdgeId = null;
+        selectedEdgeId = null;
         previewCurves.clear();
         cachedPreviewBlocks = Collections.emptyMap();
         markPreviewDirty();

@@ -41,6 +41,42 @@ public final class ModNetwork {
                 ServerPayloadHandler::handleUndo
         );
 
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_DeleteEdgePayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_DeleteEdgePayload.STREAM_CODEC,
+                ServerPayloadHandler::handleDeleteEdge
+        );
+
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_DeleteNodePayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_DeleteNodePayload.STREAM_CODEC,
+                ServerPayloadHandler::handleDeleteNode
+        );
+
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_MoveNodePayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_MoveNodePayload.STREAM_CODEC,
+                ServerPayloadHandler::handleMoveNode
+        );
+
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_ConfigureJunctionPayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_ConfigureJunctionPayload.STREAM_CODEC,
+                ServerPayloadHandler::handleConfigureJunction
+        );
+
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_ChangeEdgePresetPayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_ChangeEdgePresetPayload.STREAM_CODEC,
+                ServerPayloadHandler::handleChangeEdgePreset
+        );
+
+        registrar.playToServer(
+                com.roadbuilder.mod.network.payload.C2S_CreateRoundaboutPayload.TYPE,
+                com.roadbuilder.mod.network.payload.C2S_CreateRoundaboutPayload.STREAM_CODEC,
+                ServerPayloadHandler::handleCreateRoundabout
+        );
+
         // S2C
         registrar.playToClient(
                 S2C_SyncRoadSegmentPayload.TYPE,

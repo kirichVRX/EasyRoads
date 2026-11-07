@@ -4,9 +4,10 @@ import com.roadbuilder.mod.core.RoadBuilderMod;
 import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
+import com.roadbuilder.mod.domain.graph.RoadModuleCurve;
 import com.roadbuilder.mod.domain.graph.RoadNetworkGraph;
 import com.roadbuilder.mod.domain.graph.RoadNode;
-import com.roadbuilder.mod.domain.profile.RoadProfile;
+import com.roadbuilder.mod.domain.profile.RoadElementType;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -24,14 +25,39 @@ public record S2C_SyncFullGraphPayload(
         List<RoadEdgeData> edges
 ) implements CustomPacketPayload {
 
-    public record RoadNodeData(UUID id, Vector3d position, Vector3d tangent) {}
-    public record RoadEdgeData(UUID id, UUID nodeAId, UUID nodeBId, Vector3d p0, Vector3d p1, Vector3d p2, Vector3d p3, String profileName, double width) {}
+    public record RoadNodeData(
+            UUID id,
+            Vector3d position,
+            Vector3d tangent,
+            String nodeType,
+            String presetId,
+            double radius,
+            String junctionStyle
+    ) {}
+
+    public record RoadEdgeData(
+            UUID id,
+            UUID nodeAId,
+            UUID nodeBId,
+            Vector3d p0,
+            Vector3d p1,
+            Vector3d p2,
+            Vector3d p3,
+            String profileName,
+            double width,
+            String presetId,
+            List<RoadModuleCurve> moduleCurves
+    ) {}
 
     public static S2C_SyncFullGraphPayload fromGraph(RoadNetworkGraph graph) {
         List<RoadNodeData> nodeDataList = new ArrayList<>();
         for (RoadNode node : graph.getNodes().values()) {
             nodeDataList.add(new RoadNodeData(
-                    node.getId(), node.getPosition(), node.getTangent()
+                    node.getId(), node.getPosition(), node.getTangent(),
+                    node.getType() != null ? node.getType().name() : "ENDPOINT",
+                    node.getPresetId() != null ? node.getPresetId() : "default",
+                    node.getRadius(),
+                    node.getJunctionStyle()
             ));
         }
 
@@ -40,7 +66,9 @@ public record S2C_SyncFullGraphPayload(
             edgeDataList.add(new RoadEdgeData(
                     edge.getId(), edge.getNodeAId(), edge.getNodeBId(),
                     edge.getCurve().getP0(), edge.getCurve().getP1(), edge.getCurve().getP2(), edge.getCurve().getP3(),
-                    edge.getProfile().getName(), edge.getProfile().getWidth()
+                    edge.getProfile().getName(), edge.getProfile().getWidth(),
+                    edge.getPresetId() != null ? edge.getPresetId() : "default",
+                    edge.getModuleCurves()
             ));
         }
 
@@ -66,6 +94,10 @@ public record S2C_SyncFullGraphPayload(
             buf.writeDouble(node.tangent().x);
             buf.writeDouble(node.tangent().y);
             buf.writeDouble(node.tangent().z);
+            buf.writeUtf(node.nodeType());
+            buf.writeUtf(node.presetId());
+            buf.writeDouble(node.radius());
+            buf.writeUtf(node.junctionStyle() != null ? node.junctionStyle() : "ROUNDED");
         }
 
         buf.writeVarInt(edges.size());
@@ -87,6 +119,30 @@ public record S2C_SyncFullGraphPayload(
             buf.writeDouble(edge.p3().z);
             buf.writeUtf(edge.profileName());
             buf.writeDouble(edge.width());
+            buf.writeUtf(edge.presetId());
+
+            List<RoadModuleCurve> mods = edge.moduleCurves() != null ? edge.moduleCurves() : List.of();
+            buf.writeVarInt(mods.size());
+            for (RoadModuleCurve mc : mods) {
+                buf.writeUUID(mc.getId());
+                buf.writeUtf(mc.getType().name());
+                buf.writeDouble(mc.getWidth());
+                buf.writeDouble(mc.getStartOffset());
+                buf.writeDouble(mc.getEndOffset());
+                buf.writeInt(mc.getStackIndex());
+                buf.writeDouble(mc.getCurve().getP0().x);
+                buf.writeDouble(mc.getCurve().getP0().y);
+                buf.writeDouble(mc.getCurve().getP0().z);
+                buf.writeDouble(mc.getCurve().getP1().x);
+                buf.writeDouble(mc.getCurve().getP1().y);
+                buf.writeDouble(mc.getCurve().getP1().z);
+                buf.writeDouble(mc.getCurve().getP2().x);
+                buf.writeDouble(mc.getCurve().getP2().y);
+                buf.writeDouble(mc.getCurve().getP2().z);
+                buf.writeDouble(mc.getCurve().getP3().x);
+                buf.writeDouble(mc.getCurve().getP3().y);
+                buf.writeDouble(mc.getCurve().getP3().z);
+            }
         }
     }
 
@@ -97,7 +153,11 @@ public record S2C_SyncFullGraphPayload(
             UUID id = buf.readUUID();
             Vector3d pos = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
             Vector3d tan = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
-            nodes.add(new RoadNodeData(id, pos, tan));
+            String nodeType = buf.readUtf();
+            String presetId = buf.readUtf();
+            double radius = buf.readDouble();
+            String junctionStyle = buf.readUtf();
+            nodes.add(new RoadNodeData(id, pos, tan, nodeType, presetId, radius, junctionStyle));
         }
 
         int edgeCount = buf.readVarInt();
@@ -112,7 +172,30 @@ public record S2C_SyncFullGraphPayload(
             Vector3d p3 = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
             String profileName = buf.readUtf();
             double width = buf.readDouble();
-            edges.add(new RoadEdgeData(id, nodeAId, nodeBId, p0, p1, p2, p3, profileName, width));
+            String presetId = buf.readUtf();
+
+            int modCount = buf.readVarInt();
+            List<RoadModuleCurve> moduleCurves = new ArrayList<>(modCount);
+            for (int m = 0; m < modCount; m++) {
+                UUID mcId = buf.readUUID();
+                RoadElementType mcType;
+                try {
+                    mcType = RoadElementType.valueOf(buf.readUtf());
+                } catch (Exception e) {
+                    mcType = RoadElementType.LANE;
+                }
+                double mcWidth = buf.readDouble();
+                double mcStart = buf.readDouble();
+                double mcEnd = buf.readDouble();
+                int mcIndex = buf.readInt();
+                Vector3d q0 = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
+                Vector3d q1 = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
+                Vector3d q2 = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
+                Vector3d q3 = new Vector3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
+                moduleCurves.add(new RoadModuleCurve(mcId, mcType, mcWidth, mcStart, mcEnd, mcIndex, new BezierCurve3D(q0, q1, q2, q3)));
+            }
+
+            edges.add(new RoadEdgeData(id, nodeAId, nodeBId, p0, p1, p2, p3, profileName, width, presetId, moduleCurves));
         }
 
         return new S2C_SyncFullGraphPayload(nodes, edges);

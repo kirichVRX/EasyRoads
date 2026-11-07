@@ -1,7 +1,9 @@
 package com.roadbuilder.mod.client.editmode;
 
+import com.roadbuilder.mod.client.cache.ClientGraphCache;
 import com.roadbuilder.mod.client.key.ModKeyMappings;
 import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
+import com.roadbuilder.mod.domain.graph.RoadNode;
 import com.roadbuilder.mod.network.payload.C2S_RequestBuildSegmentPayload;
 import net.minecraft.client.Minecraft;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -44,9 +46,12 @@ public final class ClientInputHandler {
             }
         }
 
-        // When in edit mode, continuously raycast and update curve preview
+        // When in edit mode, continuously raycast and update curve preview & hovered elements
         if (EditModeManager.getInstance().isEditModeActive()) {
             NodeRaycaster.RaycastResult raycast = NodeRaycaster.raycast();
+            ClientGraphCache.getInstance().setHoveredNodeId(raycast.hoveredNode().map(RoadNode::getId).orElse(null));
+            Optional<EdgeRaycaster.EdgeHitResult> edgeHit = EdgeRaycaster.findEdgeUnderCursor();
+            ClientGraphCache.getInstance().setHoveredEdgeId(edgeHit.map(EdgeRaycaster.EdgeHitResult::edgeId).orElse(null));
             EditModeManager.getInstance().updatePreview(raycast);
         }
     }
@@ -72,14 +77,26 @@ public final class ClientInputHandler {
             return;
         }
 
-        if (key == GLFW.GLFW_KEY_1) {
-            EditModeManager.getInstance().setCurrentTool(EditTool.ADD_POINT);
-        } else if (key == GLFW.GLFW_KEY_2) {
-            EditModeManager.getInstance().setCurrentTool(EditTool.SELECT_POINT);
-        } else if (key == GLFW.GLFW_KEY_3) {
-            EditModeManager.getInstance().setCurrentTool(EditTool.ADJUST_POINT);
-        } else if (key == GLFW.GLFW_KEY_4) {
-            EditModeManager.getInstance().setCurrentTool(EditTool.DELETE_POINT);
+        if (key == GLFW.GLFW_KEY_TAB) {
+            EditModeManager.getInstance().togglePanel();
+            return;
+        }
+
+        EditModeManager.EditorPanel panel = EditModeManager.getInstance().getActivePanel();
+        EditTool[] panelTools = panel.getTools();
+
+        if (key == GLFW.GLFW_KEY_1 && panelTools.length > 0) {
+            EditModeManager.getInstance().setCurrentTool(panelTools[0]);
+        } else if (key == GLFW.GLFW_KEY_2 && panelTools.length > 1) {
+            EditModeManager.getInstance().setCurrentTool(panelTools[1]);
+        } else if (key == GLFW.GLFW_KEY_3 && panelTools.length > 2) {
+            EditModeManager.getInstance().setCurrentTool(panelTools[2]);
+        } else if (key == GLFW.GLFW_KEY_4 && panelTools.length > 3) {
+            EditModeManager.getInstance().setCurrentTool(panelTools[3]);
+        } else if (key == GLFW.GLFW_KEY_5) {
+            EditModeManager.getInstance().setCurrentTool(EditTool.DELETE_EDGE);
+        } else if (key == GLFW.GLFW_KEY_6) {
+            EditModeManager.getInstance().setCurrentTool(EditTool.MOVE_EXISTING_NODE);
         } else if (key == GLFW.GLFW_KEY_DELETE || key == GLFW.GLFW_KEY_BACKSPACE) {
             EditModeManager.getInstance().removePoint(EditModeManager.getInstance().getSelectedPointIndex());
         }
@@ -123,6 +140,16 @@ public final class ClientInputHandler {
         // In ADJUST_POINT or SELECT_POINT mode, mouse wheel moves the selected point
         // along the dominant axis player is looking towards (Axiom style)
         EditTool tool = EditModeManager.getInstance().getCurrentTool();
+        if (tool == EditTool.MOVE_EXISTING_NODE && EditModeManager.getInstance().getMovingNodeId() != null) {
+            double scroll = event.getScrollDeltaY();
+            if (Math.abs(scroll) > 0.1) {
+                double sign = scroll > 0 ? 1.0 : -1.0;
+                EditModeManager.getInstance().adjustMovingNodeHeight(sign);
+                event.setCanceled(true);
+                return;
+            }
+        }
+
         if (tool == EditTool.ADJUST_POINT || tool == EditTool.SELECT_POINT) {
             int selectedIdx = EditModeManager.getInstance().getSelectedPointIndex();
             if (selectedIdx >= 0) {
@@ -172,6 +199,34 @@ public final class ClientInputHandler {
         }
         // Right Click = Cancel chain or current operation
         else if (event.getButton() == 1 && event.getAction() == 1) { // 1 = Right click, 1 = Press
+            if (EditModeManager.getInstance().getMovingNodeId() != null) {
+                EditModeManager.getInstance().cancelNodeMove();
+                if (mc.player != null) {
+                    mc.player.displayClientMessage(net.minecraft.network.chat.Component.translatable("roadbuilder.message.construction_canceled"), true);
+                }
+                event.setCanceled(true);
+                return;
+            }
+
+            if (EditModeManager.getInstance().getActivePanel() == EditModeManager.EditorPanel.EDIT) {
+                NodeRaycaster.RaycastResult raycast = NodeRaycaster.raycast();
+                if (raycast.hoveredNode().isPresent()) {
+                    mc.setScreen(new com.roadbuilder.mod.client.gui.NodeContextMenu(raycast.hoveredNode().get()));
+                    event.setCanceled(true);
+                    return;
+                }
+
+                Optional<EdgeRaycaster.EdgeHitResult> edgeHit = EdgeRaycaster.findEdgeUnderCursor();
+                if (edgeHit.isPresent()) {
+                    com.roadbuilder.mod.domain.graph.RoadEdge edge = ClientGraphCache.getInstance().getGraph().getEdge(edgeHit.get().edgeId());
+                    if (edge != null) {
+                        mc.setScreen(new com.roadbuilder.mod.client.gui.EdgeContextMenu(edge));
+                        event.setCanceled(true);
+                        return;
+                    }
+                }
+            }
+
             if (!EditModeManager.getInstance().getChainedPoints().isEmpty()) {
                 EditModeManager.getInstance().cancelCurrentOperation();
                 if (mc.player != null) {

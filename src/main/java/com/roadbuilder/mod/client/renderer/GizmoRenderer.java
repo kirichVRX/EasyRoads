@@ -108,6 +108,28 @@ public final class GizmoRenderer {
             }
         }
 
+        // Render Node Movement gizmo (MOVE_EXISTING_NODE)
+        UUID movingNodeId = EditModeManager.getInstance().getMovingNodeId();
+        Vector3d origPos = EditModeManager.getInstance().getOriginalNodePos();
+        Vector3d targPos = EditModeManager.getInstance().getTargetNodePos();
+        if (movingNodeId != null && origPos != null && targPos != null) {
+            Vector3d elevatedOrig = origPos.add(0, surfaceElevation, 0);
+            Vector3d elevatedTarg = targPos.add(0, surfaceElevation, 0);
+
+            // Connecting line from original to target position
+            drawLine(poseStack, lines, elevatedOrig, elevatedTarg, 1.0f, 0.4f, 1.0f, 0.95f);
+
+            // Target position marker
+            AABB targetBox = new AABB(
+                    targPos.x - 0.35, targPos.y + surfaceElevation, targPos.z - 0.35,
+                    targPos.x + 0.35, targPos.y + surfaceElevation + 0.7, targPos.z + 0.35
+            );
+            LevelRenderer.renderLineBox(poseStack, lines, targetBox, 0.9f, 0.2f, 1.0f, 1.0f); // Bright Purple/Magenta
+
+            // Axis gizmo at target position
+            renderAxisGizmo(poseStack, lines, elevatedTarg);
+        }
+
         // Render ribbon lines for preview curves
         List<BezierCurve3D> previewCurves = ClientGraphCache.getInstance().getPreviewCurves();
         if (!previewCurves.isEmpty()) {
@@ -129,16 +151,29 @@ public final class GizmoRenderer {
 
     private static void renderExistingGraph(PoseStack poseStack, VertexConsumer lines) {
         ClientGraphCache cache = ClientGraphCache.getInstance();
-        UUID hoveredId = cache.getHoveredNodeId();
+        UUID hoveredNodeId = cache.getHoveredNodeId();
+        UUID hoveredEdgeId = cache.getHoveredEdgeId();
+        EditTool currentTool = EditModeManager.getInstance().getCurrentTool();
+        UUID movingNodeId = EditModeManager.getInstance().getMovingNodeId();
 
         // Render Nodes (elevated above road surface)
         for (RoadNode node : cache.getGraph().getNodes().values()) {
             Vector3d p = node.getPosition();
             AABB nodeBox = new AABB(p.x - 0.3, p.y + 1.02, p.z - 0.3, p.x + 0.3, p.y + 1.62, p.z + 0.3);
 
-            boolean isHovered = node.getId().equals(hoveredId);
-            if (isHovered) {
-                LevelRenderer.renderLineBox(poseStack, lines, nodeBox, 0.0f, 1.0f, 0.0f, 1.0f); // Bright Green
+            boolean isHovered = node.getId().equals(hoveredNodeId);
+            boolean isMoving = node.getId().equals(movingNodeId);
+
+            if (isMoving) {
+                LevelRenderer.renderLineBox(poseStack, lines, nodeBox, 0.6f, 0.6f, 0.6f, 0.6f); // Greyed out original
+            } else if (isHovered) {
+                if (currentTool == EditTool.DELETE_POINT) {
+                    LevelRenderer.renderLineBox(poseStack, lines, nodeBox, 1.0f, 0.1f, 0.1f, 1.0f); // Bright Red
+                } else if (currentTool == EditTool.MOVE_EXISTING_NODE) {
+                    LevelRenderer.renderLineBox(poseStack, lines, nodeBox, 0.9f, 0.3f, 1.0f, 1.0f); // Bright Magenta
+                } else {
+                    LevelRenderer.renderLineBox(poseStack, lines, nodeBox, 0.0f, 1.0f, 0.0f, 1.0f); // Bright Green
+                }
             } else {
                 LevelRenderer.renderLineBox(poseStack, lines, nodeBox, 0.0f, 0.8f, 1.0f, 0.8f); // Cyan
             }
@@ -146,7 +181,14 @@ public final class GizmoRenderer {
 
         // Render Edges
         for (RoadEdge edge : cache.getGraph().getEdges().values()) {
-            renderCurveLine(poseStack, lines, edge.getCurve(), 0.0f, 0.8f, 1.0f, 0.6f);
+            boolean isHovered = edge.getId().equals(hoveredEdgeId);
+            if (isHovered && currentTool == EditTool.DELETE_EDGE) {
+                renderCurveLine(poseStack, lines, edge.getCurve(), 1.0f, 0.15f, 0.15f, 1.0f); // Bright Red
+            } else if (isHovered) {
+                renderCurveLine(poseStack, lines, edge.getCurve(), 1.0f, 0.9f, 0.2f, 0.95f); // Bright Gold
+            } else {
+                renderCurveLine(poseStack, lines, edge.getCurve(), 0.0f, 0.8f, 1.0f, 0.6f);
+            }
         }
     }
 

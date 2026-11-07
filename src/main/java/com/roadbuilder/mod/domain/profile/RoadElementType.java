@@ -13,7 +13,7 @@ public enum RoadElementType {
     SIDEWALK(4),
 
     @SerializedName("curb")
-    CURB(1),
+    CURB(4),
 
     @SerializedName("lane")
     LANE(4),

@@ -3,18 +3,29 @@ package com.roadbuilder.mod.server.storage;
 import com.roadbuilder.mod.core.RoadBuilderMod;
 import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
+import com.roadbuilder.mod.domain.graph.NodeType;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
+import com.roadbuilder.mod.domain.graph.RoadModuleCurve;
 import com.roadbuilder.mod.domain.graph.RoadNetworkGraph;
 import com.roadbuilder.mod.domain.graph.RoadNode;
+import com.roadbuilder.mod.domain.profile.ModularRoadPreset;
+import com.roadbuilder.mod.domain.profile.PresetManager;
+import com.roadbuilder.mod.domain.profile.RoadElementType;
 import com.roadbuilder.mod.domain.profile.RoadProfile;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderGetter;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.SavedData;
 
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Persists the entire procedural road network graph into the world NBT storage.
@@ -23,6 +34,8 @@ import java.util.UUID;
 public final class RoadGraphSavedData extends SavedData {
     public static final String DATA_NAME = RoadBuilderMod.MOD_ID + "_graph";
     private final RoadNetworkGraph graph = new RoadNetworkGraph();
+    private final Map<UUID, Set<BlockPos>> edgeBlockRegistry = new HashMap<>();
+    private final Map<UUID, Map<BlockPos, BlockState>> edgeOriginalBlocks = new HashMap<>();
 
     public RoadGraphSavedData() {
     }
@@ -46,7 +59,32 @@ public final class RoadGraphSavedData extends SavedData {
             Vector3d pos = readVector3d(nodeTag, "Pos");
             Vector3d tangent = readVector3d(nodeTag, "Tangent");
 
-            RoadNode node = new RoadNode(id, pos, tangent);
+            NodeType type = NodeType.ENDPOINT;
+            if (nodeTag.contains("NodeType")) {
+                try {
+                    type = NodeType.valueOf(nodeTag.getString("NodeType"));
+                } catch (IllegalArgumentException ignored) {}
+            }
+            String presetId = nodeTag.contains("PresetId") ? nodeTag.getString("PresetId") : "default";
+            double radius = nodeTag.contains("Radius") ? nodeTag.getDouble("Radius") : 0.0;
+
+            RoadNode node = new RoadNode(id, pos, tangent, type, presetId, radius);
+            if (nodeTag.contains("JunctionStyle")) {
+                node.setJunctionStyle(nodeTag.getString("JunctionStyle"));
+            }
+            if (nodeTag.contains("OuterRadius")) {
+                node.setOuterRadius(nodeTag.getDouble("OuterRadius"));
+            }
+            if (nodeTag.contains("InnerRadius")) {
+                node.setInnerRadius(nodeTag.getDouble("InnerRadius"));
+            }
+            if (nodeTag.contains("RingLaneCount")) {
+                node.setRingLaneCount(nodeTag.getInt("RingLaneCount"));
+            }
+            if (nodeTag.contains("RingPresetId")) {
+                node.setRingPresetId(nodeTag.getString("RingPresetId"));
+            }
+
             graph.addNode(node);
         }
 
@@ -67,12 +105,89 @@ public final class RoadGraphSavedData extends SavedData {
             CompoundTag profTag = edgeTag.getCompound("Profile");
             RoadProfile profile = readProfile(profTag);
 
-            RoadEdge edge = new RoadEdge(id, nodeAId, nodeBId, curve, profile);
+            String presetId = edgeTag.contains("PresetId") ? edgeTag.getString("PresetId") : profile.getName();
+            if (presetId == null || presetId.isEmpty()) {
+                presetId = "default";
+            }
+
+            List<RoadModuleCurve> moduleCurves = new ArrayList<>();
+            if (edgeTag.contains("ModuleCurves", Tag.TAG_LIST)) {
+                ListTag modulesList = edgeTag.getList("ModuleCurves", Tag.TAG_COMPOUND);
+                for (int m = 0; m < modulesList.size(); m++) {
+                    CompoundTag mcTag = modulesList.getCompound(m);
+                    UUID mcId = mcTag.getUUID("Id");
+                    RoadElementType type;
+                    try {
+                        type = RoadElementType.valueOf(mcTag.getString("Type"));
+                    } catch (Exception e) {
+                        type = RoadElementType.LANE;
+                    }
+                    double width = mcTag.getDouble("Width");
+                    double startOffset = mcTag.getDouble("StartOffset");
+                    double endOffset = mcTag.getDouble("EndOffset");
+                    int stackIndex = mcTag.getInt("StackIndex");
+                    Vector3d q0 = readVector3d(mcTag, "P0");
+                    Vector3d q1 = readVector3d(mcTag, "P1");
+                    Vector3d q2 = readVector3d(mcTag, "P2");
+                    Vector3d q3 = readVector3d(mcTag, "P3");
+                    BezierCurve3D mcCurve = new BezierCurve3D(q0, q1, q2, q3);
+                    moduleCurves.add(new RoadModuleCurve(mcId, type, width, startOffset, endOffset, stackIndex, mcCurve));
+                }
+            } else {
+                final String pId = presetId;
+                ModularRoadPreset preset = PresetManager.getInstance().getAllPresets().stream()
+                        .filter(p -> p.getId().equals(pId))
+                        .findFirst()
+                        .orElse(PresetManager.getInstance().getActivePreset());
+                moduleCurves = RoadModuleCurve.generateModuleCurves(curve, preset, null, null);
+            }
+
+            RoadEdge edge = new RoadEdge(id, nodeAId, nodeBId, curve, profile, presetId, moduleCurves);
             graph.addEdge(edge);
         }
 
-        RoadBuilderMod.LOGGER.info("[RoadBuilder] Loaded road graph: {} nodes, {} edges",
-                graph.getNodeCount(), graph.getEdgeCount());
+        // 3. Load Edge Block Registry
+        if (tag.contains("EdgeBlockRegistry", Tag.TAG_LIST)) {
+            ListTag registryList = tag.getList("EdgeBlockRegistry", Tag.TAG_COMPOUND);
+            for (int i = 0; i < registryList.size(); i++) {
+                CompoundTag entryTag = registryList.getCompound(i);
+                UUID edgeId = entryTag.getUUID("EdgeId");
+                long[] packed = entryTag.getLongArray("Positions");
+                Set<BlockPos> positions = new HashSet<>(packed.length);
+                for (long p : packed) {
+                    positions.add(BlockPos.of(p));
+                }
+                data.edgeBlockRegistry.put(edgeId, positions);
+            }
+        }
+
+        // 4. Load Edge Original Blocks
+        if (tag.contains("EdgeOriginalBlocks", Tag.TAG_LIST)) {
+            ListTag origList = tag.getList("EdgeOriginalBlocks", Tag.TAG_COMPOUND);
+            HolderGetter<Block> blockGetter = registries.lookupOrThrow(Registries.BLOCK);
+            for (int i = 0; i < origList.size(); i++) {
+                CompoundTag entryTag = origList.getCompound(i);
+                UUID edgeId = entryTag.getUUID("EdgeId");
+                ListTag paletteList = entryTag.getList("Palette", Tag.TAG_COMPOUND);
+                List<BlockState> palette = new ArrayList<>(paletteList.size());
+                for (int p = 0; p < paletteList.size(); p++) {
+                    palette.add(NbtUtils.readBlockState(blockGetter, paletteList.getCompound(p)));
+                }
+                long[] positions = entryTag.getLongArray("Positions");
+                int[] indices = entryTag.getIntArray("Indices");
+                Map<BlockPos, BlockState> blockMap = new HashMap<>(positions.length);
+                for (int j = 0; j < positions.length && j < indices.length; j++) {
+                    int pIdx = indices[j];
+                    if (pIdx >= 0 && pIdx < palette.size()) {
+                        blockMap.put(BlockPos.of(positions[j]), palette.get(pIdx));
+                    }
+                }
+                data.edgeOriginalBlocks.put(edgeId, blockMap);
+            }
+        }
+
+        RoadBuilderMod.LOGGER.info("[RoadBuilder] Loaded road graph: {} nodes, {} edges, {} registered block sets, {} original block maps",
+                graph.getNodeCount(), graph.getEdgeCount(), data.edgeBlockRegistry.size(), data.edgeOriginalBlocks.size());
 
         return data;
     }
@@ -86,6 +201,18 @@ public final class RoadGraphSavedData extends SavedData {
             nodeTag.putUUID("Id", node.getId());
             writeVector3d(nodeTag, "Pos", node.getPosition());
             writeVector3d(nodeTag, "Tangent", node.getTangent());
+            nodeTag.putString("NodeType", node.getType().name());
+            nodeTag.putString("PresetId", node.getPresetId());
+            nodeTag.putDouble("Radius", node.getRadius());
+            nodeTag.putString("JunctionStyle", node.getJunctionStyle());
+
+            if (node.getType() == NodeType.ROUNDABOUT) {
+                nodeTag.putDouble("OuterRadius", node.getOuterRadius());
+                nodeTag.putDouble("InnerRadius", node.getInnerRadius());
+                nodeTag.putInt("RingLaneCount", node.getRingLaneCount());
+                nodeTag.putString("RingPresetId", node.getRingPresetId());
+            }
+
             nodesList.add(nodeTag);
         }
         tag.put("Nodes", nodesList);
@@ -97,6 +224,7 @@ public final class RoadGraphSavedData extends SavedData {
             edgeTag.putUUID("Id", edge.getId());
             edgeTag.putUUID("NodeA", edge.getNodeAId());
             edgeTag.putUUID("NodeB", edge.getNodeBId());
+            edgeTag.putString("PresetId", edge.getPresetId());
 
             BezierCurve3D curve = edge.getCurve();
             writeVector3d(edgeTag, "P0", curve.getP0());
@@ -108,9 +236,75 @@ public final class RoadGraphSavedData extends SavedData {
             writeProfile(profTag, edge.getProfile());
             edgeTag.put("Profile", profTag);
 
+            ListTag modulesTag = new ListTag();
+            for (RoadModuleCurve mc : edge.getModuleCurves()) {
+                CompoundTag mcTag = new CompoundTag();
+                mcTag.putUUID("Id", mc.getId());
+                mcTag.putString("Type", mc.getType().name());
+                mcTag.putDouble("Width", mc.getWidth());
+                mcTag.putDouble("StartOffset", mc.getStartOffset());
+                mcTag.putDouble("EndOffset", mc.getEndOffset());
+                mcTag.putInt("StackIndex", mc.getStackIndex());
+                writeVector3d(mcTag, "P0", mc.getCurve().getP0());
+                writeVector3d(mcTag, "P1", mc.getCurve().getP1());
+                writeVector3d(mcTag, "P2", mc.getCurve().getP2());
+                writeVector3d(mcTag, "P3", mc.getCurve().getP3());
+                modulesTag.add(mcTag);
+            }
+            edgeTag.put("ModuleCurves", modulesTag);
+
             edgesList.add(edgeTag);
         }
         tag.put("Edges", edgesList);
+
+        // 3. Save Edge Block Registry
+        ListTag registryList = new ListTag();
+        for (Map.Entry<UUID, Set<BlockPos>> entry : edgeBlockRegistry.entrySet()) {
+            CompoundTag entryTag = new CompoundTag();
+            entryTag.putUUID("EdgeId", entry.getKey());
+            long[] packed = entry.getValue().stream().mapToLong(BlockPos::asLong).toArray();
+            entryTag.putLongArray("Positions", packed);
+            registryList.add(entryTag);
+        }
+        tag.put("EdgeBlockRegistry", registryList);
+
+        // 4. Save Edge Original Blocks
+        ListTag origList = new ListTag();
+        for (Map.Entry<UUID, Map<BlockPos, BlockState>> entry : edgeOriginalBlocks.entrySet()) {
+            Map<BlockPos, BlockState> origMap = entry.getValue();
+            if (origMap == null || origMap.isEmpty()) continue;
+
+            List<BlockState> palette = new ArrayList<>();
+            Map<BlockState, Integer> stateToIdx = new HashMap<>();
+            for (BlockState state : origMap.values()) {
+                if (!stateToIdx.containsKey(state)) {
+                    stateToIdx.put(state, palette.size());
+                    palette.add(state);
+                }
+            }
+
+            ListTag paletteList = new ListTag();
+            for (BlockState state : palette) {
+                paletteList.add(NbtUtils.writeBlockState(state));
+            }
+
+            long[] positions = new long[origMap.size()];
+            int[] indices = new int[origMap.size()];
+            int idx = 0;
+            for (Map.Entry<BlockPos, BlockState> e : origMap.entrySet()) {
+                positions[idx] = e.getKey().asLong();
+                indices[idx] = stateToIdx.get(e.getValue());
+                idx++;
+            }
+
+            CompoundTag entryTag = new CompoundTag();
+            entryTag.putUUID("EdgeId", entry.getKey());
+            entryTag.put("Palette", paletteList);
+            entryTag.putLongArray("Positions", positions);
+            entryTag.putIntArray("Indices", indices);
+            origList.add(entryTag);
+        }
+        tag.put("EdgeOriginalBlocks", origList);
 
         return tag;
     }
@@ -119,7 +313,78 @@ public final class RoadGraphSavedData extends SavedData {
         return graph;
     }
 
-    public void addRoadSegment(RoadNode startNode, RoadNode endNode, BezierCurve3D curve, RoadProfile profile) {
+    public void registerEdgeBlocks(UUID edgeId, Set<BlockPos> positions) {
+        edgeBlockRegistry.put(edgeId, new HashSet<>(positions));
+        setDirty();
+    }
+
+    public void registerEdgeOriginalBlocks(UUID edgeId, Map<BlockPos, BlockState> originalBlocks) {
+        if (originalBlocks != null && !originalBlocks.isEmpty()) {
+            edgeOriginalBlocks.put(edgeId, new HashMap<>(originalBlocks));
+            setDirty();
+        }
+    }
+
+    public Map<BlockPos, BlockState> getEdgeOriginalBlocks(UUID edgeId) {
+        return edgeOriginalBlocks.getOrDefault(edgeId, Collections.emptyMap());
+    }
+
+    public BlockState getOriginalBlockAt(BlockPos pos) {
+        for (Map<BlockPos, BlockState> map : edgeOriginalBlocks.values()) {
+            BlockState st = map.get(pos);
+            if (st != null) return st;
+        }
+        return null;
+    }
+
+    public Set<BlockPos> getAllOtherEdgeBlocks(UUID excludeEdgeId) {
+        Set<BlockPos> set = new HashSet<>();
+        for (Map.Entry<UUID, Set<BlockPos>> entry : edgeBlockRegistry.entrySet()) {
+            if (!entry.getKey().equals(excludeEdgeId)) {
+                set.addAll(entry.getValue());
+            }
+        }
+        return set;
+    }
+
+    public Set<BlockPos> getAllOtherEdgeBlocks(Set<UUID> excludeEdgeIds) {
+        Set<BlockPos> set = new HashSet<>();
+        for (Map.Entry<UUID, Set<BlockPos>> entry : edgeBlockRegistry.entrySet()) {
+            if (!excludeEdgeIds.contains(entry.getKey())) {
+                set.addAll(entry.getValue());
+            }
+        }
+        return set;
+    }
+
+    public boolean isBlockUsedByOtherEdge(BlockPos pos, Set<UUID> excludeEdgeIds) {
+        for (Map.Entry<UUID, Set<BlockPos>> entry : edgeBlockRegistry.entrySet()) {
+            if (!excludeEdgeIds.contains(entry.getKey())) {
+                if (entry.getValue().contains(pos)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public Set<BlockPos> getEdgeBlocks(UUID edgeId) {
+        return edgeBlockRegistry.getOrDefault(edgeId, Collections.emptySet());
+    }
+
+    public void clearEdgeBlocks(UUID edgeId) {
+        boolean removed1 = edgeBlockRegistry.remove(edgeId) != null;
+        boolean removed2 = edgeOriginalBlocks.remove(edgeId) != null;
+        if (removed1 || removed2) {
+            setDirty();
+        }
+    }
+
+    public Map<UUID, Set<BlockPos>> getEdgeBlockRegistry() {
+        return Collections.unmodifiableMap(edgeBlockRegistry);
+    }
+
+    public RoadEdge addRoadSegment(RoadNode startNode, RoadNode endNode, BezierCurve3D curve, RoadProfile profile, String presetId, List<RoadModuleCurve> moduleCurves) {
         if (!graph.hasNode(startNode.getId())) {
             graph.addNode(startNode);
         }
@@ -127,9 +392,27 @@ public final class RoadGraphSavedData extends SavedData {
             graph.addNode(endNode);
         }
 
-        RoadEdge edge = new RoadEdge(startNode.getId(), endNode.getId(), curve, profile);
+        RoadEdge edge = new RoadEdge(startNode.getId(), endNode.getId(), curve, profile, presetId, moduleCurves);
         graph.addEdge(edge);
+
+        startNode.recalculateType(graph);
+        endNode.recalculateType(graph);
+
         setDirty();
+        return edge;
+    }
+
+    public RoadEdge addRoadSegment(RoadNode startNode, RoadNode endNode, BezierCurve3D curve, RoadProfile profile, String presetId) {
+        ModularRoadPreset preset = PresetManager.getInstance().getAllPresets().stream()
+                .filter(p -> p.getId().equals(presetId))
+                .findFirst()
+                .orElse(PresetManager.getInstance().getActivePreset());
+        List<RoadModuleCurve> moduleCurves = RoadModuleCurve.generateModuleCurves(curve, preset, null, null);
+        return addRoadSegment(startNode, endNode, curve, profile, presetId, moduleCurves);
+    }
+
+    public RoadEdge addRoadSegment(RoadNode startNode, RoadNode endNode, BezierCurve3D curve, RoadProfile profile) {
+        return addRoadSegment(startNode, endNode, curve, profile, profile != null ? profile.getName() : "default");
     }
 
     private static void writeVector3d(CompoundTag tag, String prefix, Vector3d vec) {

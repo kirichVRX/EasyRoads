@@ -2,14 +2,10 @@ package com.roadbuilder.mod.domain.graph;
 
 import com.roadbuilder.mod.domain.geometry.Vector3d;
 
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 /**
- * A graph node representing an intersection or anchor point in 3D world space.
+ * A graph node representing an endpoint, waypoint, intersection, or roundabout in 3D world space.
  * Rule 12: Node UUID is immutable (final).
  */
 public final class RoadNode {
@@ -18,11 +14,40 @@ public final class RoadNode {
     private Vector3d tangent;
     private final Set<UUID> connectedEdgeIds;
 
-    public RoadNode(UUID id, Vector3d position, Vector3d tangent) {
+    // Structural metadata
+    private NodeType type;
+    private String presetId;
+    private double radius;
+    private String junctionStyle = "ROUNDED";
+    private final Map<UUID, Double> edgeAngles = new HashMap<>();
+
+    // Roundabout specific metadata
+    private double outerRadius;
+    private double innerRadius;
+    private int ringLaneCount;
+    private String ringPresetId;
+
+    public RoadNode(UUID id, Vector3d position, Vector3d tangent, NodeType type, String presetId, double radius, String junctionStyle) {
         this.id = Objects.requireNonNull(id, "Node id cannot be null");
         this.position = Objects.requireNonNull(position, "position cannot be null");
         this.tangent = tangent != null ? tangent.normalize() : Vector3d.ZERO;
         this.connectedEdgeIds = new HashSet<>();
+        this.type = type != null ? type : NodeType.ENDPOINT;
+        this.presetId = presetId != null ? presetId : "default";
+        this.radius = radius >= 0.0 ? radius : 0.0;
+        this.junctionStyle = (junctionStyle != null && !junctionStyle.isBlank()) ? junctionStyle : "ROUNDED";
+        this.outerRadius = 12.0;
+        this.innerRadius = 5.0;
+        this.ringLaneCount = 2;
+        this.ringPresetId = "default";
+    }
+
+    public RoadNode(UUID id, Vector3d position, Vector3d tangent, NodeType type, String presetId, double radius) {
+        this(id, position, tangent, type, presetId, radius, "ROUNDED");
+    }
+
+    public RoadNode(UUID id, Vector3d position, Vector3d tangent) {
+        this(id, position, tangent, NodeType.ENDPOINT, "default", 0.0);
     }
 
     public RoadNode(Vector3d position) {
@@ -59,6 +84,138 @@ public final class RoadNode {
 
     public void removeEdge(UUID edgeId) {
         connectedEdgeIds.remove(edgeId);
+        edgeAngles.remove(edgeId);
+    }
+
+    public NodeType getType() {
+        return type;
+    }
+
+    public void setType(NodeType type) {
+        this.type = Objects.requireNonNull(type, "type cannot be null");
+    }
+
+    public String getPresetId() {
+        return presetId;
+    }
+
+    public void setPresetId(String presetId) {
+        this.presetId = presetId != null ? presetId : "default";
+    }
+
+    public double getRadius() {
+        return radius;
+    }
+
+    public void setRadius(double radius) {
+        this.radius = Math.max(0.0, radius);
+    }
+
+    public String getJunctionStyle() {
+        return junctionStyle != null ? junctionStyle : "ROUNDED";
+    }
+
+    public void setJunctionStyle(String junctionStyle) {
+        this.junctionStyle = (junctionStyle != null && !junctionStyle.isBlank()) ? junctionStyle : "ROUNDED";
+    }
+
+    public Map<UUID, Double> getEdgeAngles() {
+        return Collections.unmodifiableMap(edgeAngles);
+    }
+
+    public void setEdgeAngle(UUID edgeId, double angle) {
+        this.edgeAngles.put(edgeId, angle);
+    }
+
+    public double getOuterRadius() {
+        return outerRadius;
+    }
+
+    public void setOuterRadius(double outerRadius) {
+        this.outerRadius = outerRadius;
+    }
+
+    public double getInnerRadius() {
+        return innerRadius;
+    }
+
+    public void setInnerRadius(double innerRadius) {
+        this.innerRadius = innerRadius;
+    }
+
+    public int getRingLaneCount() {
+        return ringLaneCount;
+    }
+
+    public void setRingLaneCount(int ringLaneCount) {
+        this.ringLaneCount = ringLaneCount;
+    }
+
+    public String getRingPresetId() {
+        return ringPresetId;
+    }
+
+    public void setRingPresetId(String ringPresetId) {
+        this.ringPresetId = ringPresetId != null ? ringPresetId : "default";
+    }
+
+    /**
+     * Recalculates the node type and edge entry angles based on connected edges in the graph.
+     */
+    public void recalculateType(RoadNetworkGraph graph) {
+        if (this.type == NodeType.ROUNDABOUT) {
+            recalculateEdgeAngles(graph);
+            return;
+        }
+
+        List<RoadEdge> edges = graph.getEdgesForNode(this.id);
+        edgeAngles.clear();
+        recalculateEdgeAngles(graph);
+
+        int count = edges.size();
+        if (count <= 1) {
+            this.type = NodeType.ENDPOINT;
+            if (count == 1) {
+                this.presetId = edges.get(0).getPresetId();
+            }
+            return;
+        }
+
+        if (count == 2) {
+            this.type = NodeType.WAYPOINT;
+            this.presetId = edges.get(0).getPresetId();
+            return;
+        }
+
+        this.type = NodeType.JUNCTION;
+        // Calculate recommended radius: max(halfWidth) + 2.0 margin
+        double maxHalfW = 0.0;
+        for (RoadEdge edge : edges) {
+            double w = edge.getProfile() != null ? edge.getProfile().getWidth() : 10.0;
+            maxHalfW = Math.max(maxHalfW, w / 2.0);
+        }
+        if (this.radius <= 0.0) {
+            this.radius = maxHalfW + 2.0;
+        }
+    }
+
+    private void recalculateEdgeAngles(RoadNetworkGraph graph) {
+        List<RoadEdge> edges = graph.getEdgesForNode(this.id);
+        for (RoadEdge edge : edges) {
+            Vector3d dir = getDirectionAwayFromNode(edge);
+            double angle = Math.atan2(dir.z, dir.x);
+            edgeAngles.put(edge.getId(), angle);
+        }
+    }
+
+    private Vector3d getDirectionAwayFromNode(RoadEdge edge) {
+        if (edge.getNodeAId().equals(this.id)) {
+            Vector3d tan = edge.getCurve().evaluateTangent(0.0);
+            return new Vector3d(tan.x, 0, tan.z).normalize();
+        } else {
+            Vector3d tan = edge.getCurve().evaluateTangent(1.0).multiply(-1.0);
+            return new Vector3d(tan.x, 0, tan.z).normalize();
+        }
     }
 
     @Override
@@ -78,6 +235,8 @@ public final class RoadNode {
     public String toString() {
         return "RoadNode{" +
                 "id=" + id +
+                ", type=" + type +
+                ", preset=" + presetId +
                 ", position=" + position +
                 ", connectedEdges=" + connectedEdgeIds.size() +
                 '}';

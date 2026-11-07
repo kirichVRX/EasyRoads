@@ -66,13 +66,13 @@ public class ModularRoadPreset {
     public static ModularRoadPreset createDefault() {
         ModularRoadPreset preset = new ModularRoadPreset("default", "default");
         // Layout matching user spec:
-        // [Тротуар 4] [Бордюр 1] [Полоса 4] [Разметка 1] [Полоса 4] [Бордюр 1] [Тротуар 4]
+        // [Тротуар 4] [Бордюр 4] [Полоса 4] [Разметка 1] [Полоса 4] [Бордюр 4] [Тротуар 4]
         preset.stack.add(new RoadStackElement(RoadElementType.SIDEWALK, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_LONG, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.SIDEWALK, 4));
 
         preset.viaductMode = Mode.AUTO;
@@ -85,11 +85,11 @@ public class ModularRoadPreset {
     public static ModularRoadPreset createCountryRoad() {
         ModularRoadPreset preset = new ModularRoadPreset("country_road", "Сountry road");
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
-        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.MARKING_SOLID, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.SHOULDER, 3));
         preset.viaductMode = Mode.AUTO;
         preset.tunnelMode = Mode.AUTO;
@@ -105,7 +105,7 @@ public class ModularRoadPreset {
     public static ModularRoadPreset createHighway() {
         ModularRoadPreset preset = new ModularRoadPreset("highway", "Highway");
         preset.stack.add(new RoadStackElement(RoadElementType.SIDEWALK, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_LONG, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
@@ -113,7 +113,7 @@ public class ModularRoadPreset {
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.MARKING_DASHED_LONG, 1));
         preset.stack.add(new RoadStackElement(RoadElementType.LANE, 4));
-        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 1));
+        preset.stack.add(new RoadStackElement(RoadElementType.CURB, 4));
         preset.stack.add(new RoadStackElement(RoadElementType.SIDEWALK, 4));
         preset.viaductMode = Mode.AUTO;
         preset.tunnelMode = Mode.AUTO;
