@@ -200,7 +200,7 @@ public final class RoadModuleCurve {
     public static TransitionProfile getTransitionAtP0(RoadNetworkGraph graph, RoadEdge edge, ModularRoadPreset preset) {
         if (graph == null || edge == null || preset == null) return null;
         RoadNode startNode = graph.getNode(edge.getNodeAId());
-        if (startNode == null) return null;
+        if (startNode == null || startNode.getConnectedEdgeIds().size() != 2) return null;
         for (UUID otherEdgeId : startNode.getConnectedEdgeIds()) {
             if (otherEdgeId.equals(edge.getId())) continue;
             RoadEdge otherEdge = graph.getEdge(otherEdgeId);
@@ -208,10 +208,10 @@ public final class RoadModuleCurve {
             String otherPresetId = otherEdge.getPresetId();
             if (otherPresetId != null && !otherPresetId.equals(preset.getId())) {
                 ModularRoadPreset otherPreset = PresetManager.getInstance().getAllPresets().stream()
-                        .filter(p -> p.getId().equals(otherPresetId))
+                        .filter(p -> p.getId().equals(otherPresetId) || p.getName().equalsIgnoreCase(otherPresetId) || (otherEdge.getProfile() != null && p.getName().equalsIgnoreCase(otherEdge.getProfile().getName())))
                         .findFirst()
                         .orElse(null);
-                if (otherPreset != null) {
+                if (otherPreset != null && Math.abs(preset.getTotalWidth() - otherPreset.getTotalWidth()) > 0.01 && TransitionProfile.shouldEdgeHostTransition(edge, otherEdge, preset, otherPreset)) {
                     return new TransitionProfile(otherPreset, preset);
                 }
             }
@@ -225,7 +225,7 @@ public final class RoadModuleCurve {
     public static TransitionProfile getTransitionAtP3(RoadNetworkGraph graph, RoadEdge edge, ModularRoadPreset preset) {
         if (graph == null || edge == null || preset == null) return null;
         RoadNode endNode = graph.getNode(edge.getNodeBId());
-        if (endNode == null) return null;
+        if (endNode == null || endNode.getConnectedEdgeIds().size() != 2) return null;
         for (UUID otherEdgeId : endNode.getConnectedEdgeIds()) {
             if (otherEdgeId.equals(edge.getId())) continue;
             RoadEdge otherEdge = graph.getEdge(otherEdgeId);
@@ -233,10 +233,10 @@ public final class RoadModuleCurve {
             String otherPresetId = otherEdge.getPresetId();
             if (otherPresetId != null && !otherPresetId.equals(preset.getId())) {
                 ModularRoadPreset otherPreset = PresetManager.getInstance().getAllPresets().stream()
-                        .filter(p -> p.getId().equals(otherPresetId))
+                        .filter(p -> p.getId().equals(otherPresetId) || p.getName().equalsIgnoreCase(otherPresetId) || (otherEdge.getProfile() != null && p.getName().equalsIgnoreCase(otherEdge.getProfile().getName())))
                         .findFirst()
                         .orElse(null);
-                if (otherPreset != null) {
+                if (otherPreset != null && Math.abs(preset.getTotalWidth() - otherPreset.getTotalWidth()) > 0.01 && TransitionProfile.shouldEdgeHostTransition(edge, otherEdge, preset, otherPreset)) {
                     return new TransitionProfile(preset, otherPreset);
                 }
             }

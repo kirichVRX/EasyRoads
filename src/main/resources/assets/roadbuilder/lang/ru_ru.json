@@ -53,6 +53,7 @@
   "roadbuilder.overlay.adjust_hint": "§eКликните ЛКМ по точке, чтобы появились оси перемещения!",
   "roadbuilder.overlay.status_bar": "§aТочки: §f%s §7| §eENTER§7: Построить | §cПКМ§7: Сброс | §bCtrl+Z§7: Отмена",
 
+  "roadbuilder.gui.road_settings": "Настройки",
   "roadbuilder.gui.packs": "Паки",
   "roadbuilder.gui.presets": "Пресеты",
   "roadbuilder.gui.new": "+ Новый",

@@ -216,6 +216,45 @@ public final class BezierCurve3D {
         return new CurveProjection2D(finalT, finalDistAlong, lateralDist, curvePoint, tangent);
     }
 
+    /**
+     * Splits this cubic Bezier curve into two exact sub-curves at parameter t in (0, 1)
+     * via De Casteljau subdivision (preserving linear elevation interpolation).
+     */
+    public BezierCurve3D[] splitAt(double t) {
+        double clampedT = Math.max(1e-4, Math.min(1.0 - 1e-4, t));
+        double u = 1.0 - clampedT;
+
+        Vector3d q0 = p0.multiply(u).add(p1.multiply(clampedT));
+        Vector3d q1 = p1.multiply(u).add(p2.multiply(clampedT));
+        Vector3d q2 = p2.multiply(u).add(p3.multiply(clampedT));
+
+        Vector3d r0 = q0.multiply(u).add(q1.multiply(clampedT));
+        Vector3d r1 = q1.multiply(u).add(q2.multiply(clampedT));
+
+        Vector3d splitXZ = r0.multiply(u).add(r1.multiply(clampedT));
+        double splitY = p0.y + (p3.y - p0.y) * clampedT;
+        Vector3d splitPt = new Vector3d(splitXZ.x, splitY, splitXZ.z);
+
+        double yQ0 = p0.y + (splitY - p0.y) / 3.0;
+        double yR0 = p0.y + 2.0 * (splitY - p0.y) / 3.0;
+        double yR1 = splitY + (p3.y - splitY) / 3.0;
+        double yQ2 = splitY + 2.0 * (p3.y - splitY) / 3.0;
+
+        BezierCurve3D left = new BezierCurve3D(
+                p0,
+                new Vector3d(q0.x, yQ0, q0.z),
+                new Vector3d(r0.x, yR0, r0.z),
+                splitPt
+        );
+        BezierCurve3D right = new BezierCurve3D(
+                splitPt,
+                new Vector3d(r1.x, yR1, r1.z),
+                new Vector3d(q2.x, yQ2, q2.z),
+                p3
+        );
+        return new BezierCurve3D[]{left, right};
+    }
+
 
     @Override
     public boolean equals(Object o) {

@@ -18,14 +18,15 @@ import java.util.*;
  * Supports presets saved on disk (config/roadbuilder/presets.json).
  */
 public final class PresetManager {
-    private static final PresetManager INSTANCE = new PresetManager();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final PresetManager INSTANCE = new PresetManager();
 
     private final Map<String, ModularRoadPreset> presets = new LinkedHashMap<>();
     private String activePresetId = "default";
 
     private PresetManager() {
         initDefaults();
+        loadFromFile();
     }
 
     public static PresetManager getInstance() {

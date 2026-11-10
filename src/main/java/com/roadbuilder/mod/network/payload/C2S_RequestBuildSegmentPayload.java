@@ -20,8 +20,14 @@ public record C2S_RequestBuildSegmentPayload(
         Vector3d p3,
         Optional<UUID> startNodeId,
         Optional<UUID> endNodeId,
-        String profileName
+        String profileName,
+        String junctionStyle
 ) implements CustomPacketPayload {
+
+    public C2S_RequestBuildSegmentPayload(Vector3d p0, Vector3d p1, Vector3d p2, Vector3d p3,
+                                          Optional<UUID> startNodeId, Optional<UUID> endNodeId, String profileName) {
+        this(p0, p1, p2, p3, startNodeId, endNodeId, profileName, "");
+    }
 
     public static final Type<C2S_RequestBuildSegmentPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(RoadBuilderMod.MOD_ID, "request_build_segment"));
@@ -45,6 +51,7 @@ public record C2S_RequestBuildSegmentPayload(
         endNodeId.ifPresent(buf::writeUUID);
 
         buf.writeUtf(profileName);
+        buf.writeUtf(junctionStyle != null ? junctionStyle : "");
     }
 
     private static C2S_RequestBuildSegmentPayload read(FriendlyByteBuf buf) {
@@ -57,8 +64,9 @@ public record C2S_RequestBuildSegmentPayload(
         Optional<UUID> endNodeId = buf.readBoolean() ? Optional.of(buf.readUUID()) : Optional.empty();
 
         String profileName = buf.readUtf();
+        String junctionStyle = buf.readUtf();
 
-        return new C2S_RequestBuildSegmentPayload(p0, p1, p2, p3, startNodeId, endNodeId, profileName);
+        return new C2S_RequestBuildSegmentPayload(p0, p1, p2, p3, startNodeId, endNodeId, profileName, junctionStyle);
     }
 
     private static void writeVector3d(FriendlyByteBuf buf, Vector3d vec) {

@@ -134,7 +134,7 @@ public class RoadPresetStudioScreen extends Screen {
     }
 
     private void renderLeftPanel(GuiGraphics guiGraphics, int mouseX, int mouseY) {
-        int panelW = 175;
+        int panelW = 200;
         int panelH = this.height - 100;
         int x = 16;
         int y = 20;
@@ -143,20 +143,20 @@ public class RoadPresetStudioScreen extends Screen {
         guiGraphics.fill(x, y, x + panelW, y + panelH, 0xEE1E2436);
         guiGraphics.fill(x, y, x + panelW, y + 2, 0xFF354466);
 
-        // Tabs: [ Паки ] vs [ Пресеты ]
+        // Tabs: [ Настройки ] vs [ Пресеты ]
         int tabW = (panelW - 16) / 2;
         int tabH = 20;
         int tab1X = x + 6;
         int tab2X = x + 10 + tabW;
         int tabY = y + 8;
 
-        // Tab 0: Паки
+        // Tab 0: Настройка дороги
         boolean tab0Hover = mouseX >= tab1X && mouseX <= tab1X + tabW && mouseY >= tabY && mouseY <= tabY + tabH;
         int tab0Bg = (leftTab == 0) ? 0xFF2B4D7E : (tab0Hover ? 0xFF243A5E : 0xFF16253B);
         int tab0Border = (leftTab == 0) ? 0xFF66B3FF : 0xFF335577;
         guiGraphics.fill(tab1X, tabY, tab1X + tabW, tabY + tabH, tab0Border);
         guiGraphics.fill(tab1X + 1, tabY + 1, tab1X + tabW - 1, tabY + tabH - 1, tab0Bg);
-        String t0Str = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.packs").getString();
+        String t0Str = net.minecraft.network.chat.Component.translatable("roadbuilder.gui.road_settings").getString();
         int t0W = this.font.width(t0Str);
         guiGraphics.drawString(this.font, t0Str, tab1X + (tabW - t0W) / 2, tabY + 6, leftTab == 0 ? 0xFFFFFFFF : 0xFFAAAAAA, false);
 
@@ -178,27 +178,91 @@ public class RoadPresetStudioScreen extends Screen {
         guiGraphics.enableScissor(x + 4, contentY, x + panelW - 4, contentY + contentH);
 
         if (leftTab == 0) {
-            // Road Packs list
-            RoadPackRegistry.RoadPack activePack = RoadPackRegistry.getInstance().getActivePack();
+            // Detailed Road Configuration List
+            ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
             int curY = contentY - (int) leftPanelScroll;
+            int btnW = panelW - 16;
+            int btnH = 20;
 
-            for (RoadPackRegistry.RoadPack pack : RoadPackRegistry.getInstance().getAllPacks().values()) {
-                boolean isSelected = pack.getId().equals(activePack.getId());
-                boolean hover = mouseX >= x + 8 && mouseX <= x + panelW - 8 && mouseY >= curY && mouseY <= curY + 20;
+            // 1. ПЕРЕКРЕСТКИ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ПЕРЕКРЁСТКИ");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Стиль: " + active.getJunctionStyle().getLabel(), mouseX, mouseY);
+            curY += 24;
 
-                int itemBg = isSelected ? 0xFF2E4E80 : (hover ? 0xFF253B61 : 0xFF14243B);
-                int itemBorder = isSelected ? 0xFF66B3FF : (hover ? 0xFF4477AA : 0xFF223855);
-
-                guiGraphics.fill(x + 8, curY, x + panelW - 8, curY + 20, itemBorder);
-                guiGraphics.fill(x + 9, curY + 1, x + panelW - 9, curY + 19, itemBg);
-
-                String name = pack.getDisplayName();
-                if (this.font.width(name) > panelW - 28) {
-                    name = this.font.plainSubstrByWidth(name, panelW - 36) + "...";
-                }
-                guiGraphics.drawString(this.font, name, x + 14, curY + 6, isSelected ? 0xFFFFFFFF : 0xFFCCCCCC, false);
+            // 2. ФОНАРИ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОСВЕЩЕНИЕ (ФОНАРИ)");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Фонари: " + active.getLampStyle().getLabel(), mouseX, mouseY);
+            curY += 24;
+            if (active.getLampStyle() != ModularRoadPreset.LampStyle.OFF) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Шаг фонарей: " + active.getLampSpacing() + "м", mouseX, mouseY);
                 curY += 24;
             }
+
+            // 3. ОГРАЖДЕНИЯ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОГРАЖДЕНИЯ");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Отбойники: " + active.getGuardrailStyle().getLabel(), mouseX, mouseY);
+            curY += 24;
+
+            // 4. ДОПЫ ДЛЯ ТРОТУАРА
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОЗЕЛЕНЕНИЕ ТРОТУАРА");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Деревья: " + (active.isTreesEnabled() ? "Вкл (" + active.getTreeSpacing() + "м)" : "Выкл"), mouseX, mouseY);
+            curY += 24;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Кусты: " + (active.isBushesEnabled() ? "Вкл (" + active.getBushSpacing() + "м)" : "Выкл"), mouseX, mouseY);
+            curY += 24;
+
+            // 5. НАСЫПЬ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "НАСЫПЬ");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getEmbankmentMode().getLabel(), mouseX, mouseY);
+            curY += 24;
+            if (active.getEmbankmentMode() != ModularRoadPreset.ToggleMode.OFF) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма: " + active.getEmbankmentShape().getLabel(), mouseX, mouseY);
+                curY += 24;
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Материал: " + active.getEmbankmentMaterial().getLabel(), mouseX, mouseY);
+                curY += 24;
+            }
+
+            // 6. ОТКОСЫ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОТКОСЫ ВЫЕМОК");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getSlopeMode().getLabel(), mouseX, mouseY);
+            curY += 24;
+            if (active.getSlopeMode() != ModularRoadPreset.ToggleMode.OFF) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма: " + active.getSlopeStyle().getLabel(), mouseX, mouseY);
+                curY += 24;
+            }
+
+            // 7. ТОННЕЛИ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ТОННЕЛИ");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getTunnelMode().getLabel(), mouseX, mouseY);
+            curY += 24;
+            if (active.getTunnelMode() != ModularRoadPreset.Mode.OFF) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма свода: " + active.getTunnelShape().getLabel(), mouseX, mouseY);
+                curY += 24;
+            }
+
+            // 8. ЭСТАКАДЫ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ЭСТАКАДЫ (МОСТЫ)");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getViaductMode().getLabel(), mouseX, mouseY);
+            curY += 24;
+            if (active.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Опоры: " + active.getPillarStyle().getLabel(), mouseX, mouseY);
+                curY += 24;
+            }
+
+            // 9. БОРДЮРЫ И ТРОТУАРЫ
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "БОРДЮРЫ И ТРОТУАРЫ");
+            curY += 16;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Бордюры: " + active.getCurbPalette().getLabel(), mouseX, mouseY);
+            curY += 24;
+            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Тротуары: " + active.getSidewalkPalette().getLabel(), mouseX, mouseY);
+            curY += 24;
         } else {
             // Saved Presets list
             ModularRoadPreset activePreset = PresetManager.getInstance().getActivePreset();
@@ -264,6 +328,11 @@ public class RoadPresetStudioScreen extends Screen {
         }
     }
 
+    private void renderCategoryHeader(GuiGraphics guiGraphics, int x, int y, int w, String title) {
+        guiGraphics.drawString(this.font, title, x + 2, y + 4, 0xFF66B3FF, false);
+        guiGraphics.fill(x, y + 14, x + w, y + 15, 0xFF2A4A72);
+    }
+
     private void renderRightPanels(GuiGraphics guiGraphics, int mouseX, int mouseY) {
         int panelW = 195;
         int x = this.width - panelW - 16;
@@ -275,28 +344,14 @@ public class RoadPresetStudioScreen extends Screen {
         guiGraphics.fill(x, y0, x + panelW, y0 + 2, 0xFF354466);
         guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.preset_name", "Название пресета").getString(), x + 10, y0 + 6, 0xFFFFFFFF, false);
 
-        // Card 1: Настройки (сдвинуты на y0 + h0 + 8)
+        // Card 1: Отображение в предпросмотре (все настройки профиля переехали в левую панель)
         int y1 = y0 + h0 + 8;
-        int h1 = 126;
+        int h1 = 150;
         guiGraphics.fill(x, y1, x + panelW, y1 + h1, 0xEE1E2436);
         guiGraphics.fill(x, y1, x + panelW, y1 + 2, 0xFF354466);
-        guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.settings_title").getString(), x + 10, y1 + 8, 0xFFFFFFFF, false);
+        guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.view_title").getString(), x + 10, y1 + 8, 0xFFFFFFFF, false);
 
-        ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
-        int sy = y1 + 26;
-        drawSettingButton(guiGraphics, x + 8, sy, panelW - 16, 20, Component.translatable("roadbuilder.gui.viaduct", active.getViaductMode().getLabel()).getString(), mouseX, mouseY);
-        drawSettingButton(guiGraphics, x + 8, sy + 24, panelW - 16, 20, Component.translatable("roadbuilder.gui.tunnel", active.getTunnelMode().getLabel()).getString(), mouseX, mouseY);
-        drawSettingButton(guiGraphics, x + 8, sy + 48, panelW - 16, 20, Component.translatable("roadbuilder.gui.slope", active.getSlopeMode().getLabel()).getString(), mouseX, mouseY);
-        drawSettingButton(guiGraphics, x + 8, sy + 72, panelW - 16, 20, Component.translatable("roadbuilder.gui.embankment", active.getEmbankmentMode().getLabel()).getString(), mouseX, mouseY);
-
-        // Card 2: Отображение в предпросмотре
-        int y2 = y1 + h1 + 8;
-        int h2 = 150;
-        guiGraphics.fill(x, y2, x + panelW, y2 + h2, 0xEE1E2436);
-        guiGraphics.fill(x, y2, x + panelW, y2 + 2, 0xFF354466);
-        guiGraphics.drawString(this.font, Component.translatable("roadbuilder.gui.view_title").getString(), x + 10, y2 + 8, 0xFFFFFFFF, false);
-
-        int vy = y2 + 26;
+        int vy = y1 + 26;
         drawToggleButton(guiGraphics, x + 8, vy, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_road").getString(), viewRoad, mouseX, mouseY);
         drawToggleButton(guiGraphics, x + 8, vy + 24, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_viaduct").getString(), viewViaduct, mouseX, mouseY);
         drawToggleButton(guiGraphics, x + 8, vy + 48, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_tunnel").getString(), viewTunnel, mouseX, mouseY);
@@ -954,7 +1009,7 @@ public class RoadPresetStudioScreen extends Screen {
         }
 
         // 2. Left Panel handling (Tabs & lists)
-        int panelW = 175;
+        int panelW = 200;
         int panelH = this.height - 100;
         int lx = 16;
         int ly = 20;
@@ -966,7 +1021,7 @@ public class RoadPresetStudioScreen extends Screen {
             int tab2X = lx + 10 + tabW;
             int tabY = ly + 8;
 
-            // Tab 0: [ Паки ]
+            // Tab 0: [ Настройки ]
             if (mouseX >= tab1X && mouseX <= tab1X + tabW && mouseY >= tabY && mouseY <= tabY + tabH) {
                 leftTab = 0;
                 leftPanelScroll = 0;
@@ -982,15 +1037,150 @@ public class RoadPresetStudioScreen extends Screen {
             int contentY = tabY + tabH + 8;
 
             if (leftTab == 0) {
-                // Click on pack
+                // Interactive Road Settings
+                ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
                 int curY = contentY - (int) leftPanelScroll;
-                for (RoadPackRegistry.RoadPack pack : RoadPackRegistry.getInstance().getAllPacks().values()) {
-                    if (mouseX >= lx + 8 && mouseX <= lx + panelW - 8 && mouseY >= curY && mouseY <= curY + 20) {
-                        RoadPackRegistry.getInstance().setActivePackId(pack.getId());
+                int btnW = panelW - 16;
+                int btnH = 20;
+
+                // 1. ПЕРЕКРЁСТКИ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.cycleJunctionStyle();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+
+                // 2. ФОНАРИ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.cycleLampStyle();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (active.getLampStyle() != ModularRoadPreset.LampStyle.OFF) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleLampSpacing();
+                        saveAndRefreshStudio();
                         return true;
                     }
                     curY += 24;
                 }
+
+                // 3. ОГРАЖДЕНИЯ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.cycleGuardrailStyle();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+
+                // 4. ДОПЫ ДЛЯ ТРОТУАРА
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.toggleTrees();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.toggleBushes();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+
+                // 5. НАСЫПЬ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.setEmbankmentMode(cycleToggle(active.getEmbankmentMode()));
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (active.getEmbankmentMode() != ModularRoadPreset.ToggleMode.OFF) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleEmbankmentShape();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleEmbankmentMaterial();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                }
+
+                // 6. ОТКОСЫ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.setSlopeMode(cycleToggle(active.getSlopeMode()));
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (active.getSlopeMode() != ModularRoadPreset.ToggleMode.OFF) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleSlopeStyle();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                }
+
+                // 7. ТУННЕЛИ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.setTunnelMode(cycleMode(active.getTunnelMode()));
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (active.getTunnelMode() != ModularRoadPreset.Mode.OFF) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleTunnelShape();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                }
+
+                // 8. ЭСТАКАДЫ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.setViaductMode(cycleMode(active.getViaductMode()));
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (active.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cyclePillarStyle();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                }
+
+                // 9. БОРДЮРЫ И ТРОТУАРЫ
+                curY += 16;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.cycleCurbPalette();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
+                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                    active.cycleSidewalkPalette();
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                curY += 24;
             } else {
                 // Click on preset
                 int curY = contentY - (int) leftPanelScroll;
@@ -1048,9 +1238,7 @@ public class RoadPresetStudioScreen extends Screen {
         int rx = this.width - rPanelW - 16;
         int y0 = 20;
         int y1 = y0 + 46 + 8;
-        int sy = y1 + 26;
-
-        ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
+        int vy = y1 + 26;
 
         if (this.nameEditBox != null && this.nameEditBox.mouseClicked(mouseX, mouseY, button)) {
             this.setFocused(this.nameEditBox);
@@ -1058,28 +1246,7 @@ public class RoadPresetStudioScreen extends Screen {
         }
 
         if (mouseX >= rx + 8 && mouseX <= rx + rPanelW - 8) {
-            // Settings card
-            if (mouseY >= sy && mouseY <= sy + 20) {
-                active.setViaductMode(cycleMode(active.getViaductMode()));
-                PresetManager.getInstance().saveToFile();
-                return true;
-            } else if (mouseY >= sy + 24 && mouseY <= sy + 44) {
-                active.setTunnelMode(cycleMode(active.getTunnelMode()));
-                PresetManager.getInstance().saveToFile();
-                return true;
-            } else if (mouseY >= sy + 48 && mouseY <= sy + 68) {
-                active.setSlopeMode(cycleToggle(active.getSlopeMode()));
-                PresetManager.getInstance().saveToFile();
-                return true;
-            } else if (mouseY >= sy + 72 && mouseY <= sy + 92) {
-                active.setEmbankmentMode(cycleToggle(active.getEmbankmentMode()));
-                PresetManager.getInstance().saveToFile();
-                return true;
-            }
-
             // View toggles card
-            int y2 = y1 + 126 + 8;
-            int vy = y2 + 26;
             if (mouseY >= vy && mouseY <= vy + 20) { viewRoad = !viewRoad; return true; }
             if (mouseY >= vy + 24 && mouseY <= vy + 44) { viewViaduct = !viewViaduct; return true; }
             if (mouseY >= vy + 48 && mouseY <= vy + 68) { viewTunnel = !viewTunnel; return true; }
@@ -1100,6 +1267,7 @@ public class RoadPresetStudioScreen extends Screen {
         int totalActionsW = btnAddW + gap + btnDelW + gap + btnMoveW + gap + btnMoveW + gap + btnWidthW + gap + btnWidthW;
         int actionStartX = (this.width - totalActionsW) / 2;
 
+        ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
         List<RoadStackElement> stack = active.getStack();
 
         // [+ Добавить]
@@ -1298,6 +1466,11 @@ public class RoadPresetStudioScreen extends Screen {
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
+    private void saveAndRefreshStudio() {
+        PresetManager.getInstance().saveToFile();
+        ClientGraphCache.getInstance().markPreviewDirty();
+    }
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         // 1. Dropdown scrolling
@@ -1310,13 +1483,12 @@ public class RoadPresetStudioScreen extends Screen {
         }
 
         // 2. Left panel scrolling
-        int panelW = 175;
+        int panelW = 200;
         int panelH = this.height - 100;
         if (mouseX >= 16 && mouseX <= 16 + panelW && mouseY >= 20 && mouseY <= 20 + panelH) {
-            int count = (leftTab == 0)
-                    ? RoadPackRegistry.getInstance().getAllPacks().size()
-                    : PresetManager.getInstance().getAllPresets().size();
-            float maxScroll = Math.max(0, count * 24 - (panelH - 70));
+            float maxScroll = (leftTab == 0)
+                    ? Math.max(0, 560.0f - (panelH - 70))
+                    : Math.max(0, PresetManager.getInstance().getAllPresets().size() * 24 - (panelH - 70));
             leftPanelScroll = Math.max(0, Math.min(maxScroll, leftPanelScroll - (float) scrollY * 20));
             return true;
         }

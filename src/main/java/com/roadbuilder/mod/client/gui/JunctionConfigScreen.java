@@ -1,5 +1,6 @@
 package com.roadbuilder.mod.client.gui;
 
+import com.roadbuilder.mod.domain.graph.NodeType;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
 import com.roadbuilder.mod.domain.graph.RoadNode;
 import com.roadbuilder.mod.network.payload.C2S_ConfigureJunctionPayload;
@@ -18,17 +19,46 @@ import java.util.Objects;
  */
 public class JunctionConfigScreen extends Screen {
 
+    public enum DisplayStyle {
+        CITY("Городской (с переходами)", "CITY"),
+        ROUNDED("Обычный", "ROUNDED"),
+        ROUNDABOUT("Кольцевой", "ROUNDABOUT");
+
+        private final String label;
+        private final String code;
+
+        DisplayStyle(String label, String code) {
+            this.label = label;
+            this.code = code;
+        }
+
+        public String getLabel() { return label; }
+        public String getCode() { return code; }
+
+        public static DisplayStyle fromNode(RoadNode node) {
+            if (node.getType() == NodeType.ROUNDABOUT || "ROUNDABOUT".equalsIgnoreCase(node.getJunctionStyle())) {
+                return ROUNDABOUT;
+            }
+            String s = node.getJunctionStyle();
+            if ("ROUNDED".equalsIgnoreCase(s) || "REGULAR".equalsIgnoreCase(s) || "ОБЫЧНЫЙ".equalsIgnoreCase(s)) {
+                return ROUNDED;
+            }
+            return CITY;
+        }
+    }
+
     private final RoadNode node;
     private final List<RoadEdge> edges;
     private double currentRadius;
-    private JunctionGenerator.JunctionStyle currentStyle;
+    private boolean radiusModified = false;
+    private DisplayStyle currentDisplayStyle;
 
     public JunctionConfigScreen(RoadNode node, List<RoadEdge> edges) {
         super(Component.translatable("roadbuilder.gui.junction_config_title"));
         this.node = Objects.requireNonNull(node);
         this.edges = edges != null ? edges : List.of();
         this.currentRadius = node.getRadius() > 0 ? node.getRadius() : JunctionGenerator.calculateJunctionRadius(node, this.edges);
-        this.currentStyle = JunctionGenerator.JunctionStyle.fromString(node.getJunctionStyle());
+        this.currentDisplayStyle = DisplayStyle.fromNode(node);
     }
 
     @Override
@@ -73,20 +103,29 @@ public class JunctionConfigScreen extends Screen {
 
     private void adjustRadius(double delta) {
         this.currentRadius = Math.max(3.0, Math.min(32.0, this.currentRadius + delta));
+        this.radiusModified = true;
     }
 
     private void cycleStyle() {
-        JunctionGenerator.JunctionStyle[] styles = JunctionGenerator.JunctionStyle.values();
-        int nextIdx = (this.currentStyle.ordinal() + 1) % styles.length;
-        this.currentStyle = styles[nextIdx];
+        DisplayStyle[] styles = DisplayStyle.values();
+        int nextIdx = (this.currentDisplayStyle.ordinal() + 1) % styles.length;
+        this.currentDisplayStyle = styles[nextIdx];
+        this.radiusModified = false;
+        JunctionGenerator.JunctionStyle jStyle = JunctionGenerator.JunctionStyle.fromString(this.currentDisplayStyle.getCode());
+        double maxR = 6.0;
+        for (double d : JunctionGenerator.calculateArmEntryDistances(node, edges, jStyle).values()) {
+            if (d > maxR) maxR = d;
+        }
+        this.currentRadius = maxR;
     }
 
     private Component getStyleComponent() {
-        return Component.literal("Style: " + this.currentStyle.name());
+        return Component.literal("Стиль: " + this.currentDisplayStyle.getLabel());
     }
 
     private void applyAndClose() {
-        PacketDistributor.sendToServer(new C2S_ConfigureJunctionPayload(node.getId(), currentRadius, currentStyle.name()));
+        double radiusToSend = radiusModified ? currentRadius : 0.0;
+        PacketDistributor.sendToServer(new C2S_ConfigureJunctionPayload(node.getId(), radiusToSend, currentDisplayStyle.getCode()));
         this.onClose();
     }
 
@@ -110,11 +149,11 @@ public class JunctionConfigScreen extends Screen {
         guiGraphics.drawString(this.font, this.title, panelX + 12, panelY + 10, 0xFFECEFF4, false);
 
         // Info: connected arms
-        String armsInfo = "Connected roads: " + edges.size();
+        String armsInfo = "Подключено дорог: " + edges.size();
         guiGraphics.drawString(this.font, armsInfo, panelX + 12, panelY + 28, 0xFF88C0D0, false);
 
         // Radius label
-        String radiusLabel = String.format(java.util.Locale.US, "Radius: %.1f blocks", this.currentRadius);
+        String radiusLabel = String.format(java.util.Locale.US, "Радиус: %.1f блоков", this.currentRadius);
         int radiusW = this.font.width(radiusLabel);
         guiGraphics.drawString(this.font, radiusLabel, centerX - radiusW / 2, panelY + 50, 0xFFFFFFFF, false);
 

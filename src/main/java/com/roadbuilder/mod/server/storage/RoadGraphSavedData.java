@@ -69,13 +69,19 @@ public final class RoadGraphSavedData extends SavedData {
             double radius = nodeTag.contains("Radius") ? nodeTag.getDouble("Radius") : 0.0;
 
             RoadNode node = new RoadNode(id, pos, tangent, type, presetId, radius);
-            if (nodeTag.contains("JunctionStyle")) {
+            if ((type == NodeType.JUNCTION || type == NodeType.ROUNDABOUT) && nodeTag.contains("JunctionStyle")) {
                 node.setJunctionStyle(nodeTag.getString("JunctionStyle"));
             }
             if (nodeTag.contains("OuterRadius")) {
-                node.setOuterRadius(nodeTag.getDouble("OuterRadius"));
-            }
-            if (nodeTag.contains("InnerRadius")) {
+                double oR = nodeTag.getDouble("OuterRadius");
+                double iR = nodeTag.contains("InnerRadius") ? nodeTag.getDouble("InnerRadius") : 13.0;
+                if (oR == 42.0 && iR == 24.0) {
+                    oR = 23.0;
+                    iR = 13.0;
+                }
+                node.setOuterRadius(oR);
+                node.setInnerRadius(iR);
+            } else if (nodeTag.contains("InnerRadius")) {
                 node.setInnerRadius(nodeTag.getDouble("InnerRadius"));
             }
             if (nodeTag.contains("RingLaneCount")) {
@@ -204,7 +210,9 @@ public final class RoadGraphSavedData extends SavedData {
             nodeTag.putString("NodeType", node.getType().name());
             nodeTag.putString("PresetId", node.getPresetId());
             nodeTag.putDouble("Radius", node.getRadius());
-            nodeTag.putString("JunctionStyle", node.getJunctionStyle());
+            if (node.getType() == NodeType.JUNCTION || node.getType() == NodeType.ROUNDABOUT) {
+                nodeTag.putString("JunctionStyle", node.getJunctionStyle());
+            }
 
             if (node.getType() == NodeType.ROUNDABOUT) {
                 nodeTag.putDouble("OuterRadius", node.getOuterRadius());
@@ -363,6 +371,15 @@ public final class RoadGraphSavedData extends SavedData {
                 if (entry.getValue().contains(pos)) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    public boolean isRoadBlock(BlockPos pos) {
+        for (Set<BlockPos> set : edgeBlockRegistry.values()) {
+            if (set.contains(pos)) {
+                return true;
             }
         }
         return false;

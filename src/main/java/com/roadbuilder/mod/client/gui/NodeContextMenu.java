@@ -55,7 +55,7 @@ public class NodeContextMenu extends Screen {
         curY += btnH + spacing;
 
         // 3. Configure Junction
-        boolean isJunction = node.getType() == NodeType.JUNCTION;
+        boolean isJunctionOrRoundabout = node.getType() == NodeType.JUNCTION || node.getType() == NodeType.ROUNDABOUT;
         this.addRenderableWidget(Button.builder(Component.translatable("roadbuilder.gui.menu_config_junction"), b -> {
             if (this.minecraft != null) {
                 this.minecraft.setScreen(new JunctionConfigScreen(
@@ -63,7 +63,7 @@ public class NodeContextMenu extends Screen {
                         ClientGraphCache.getInstance().getGraph().getEdgesForNode(node.getId())
                 ));
             }
-        }).bounds(menuX + 10, curY, menuW - 20, btnH).build()).active = isJunction;
+        }).bounds(menuX + 10, curY, menuW - 20, btnH).build()).active = isJunctionOrRoundabout;
         curY += btnH + spacing;
 
         // 4. Configure Roundabout

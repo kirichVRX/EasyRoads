@@ -1,6 +1,8 @@
 package com.roadbuilder.mod.domain.graph;
 
 import com.roadbuilder.mod.domain.geometry.Vector3d;
+import com.roadbuilder.mod.domain.profile.ModularRoadPreset;
+import com.roadbuilder.mod.domain.profile.PresetManager;
 
 import java.util.*;
 
@@ -18,7 +20,7 @@ public final class RoadNode {
     private NodeType type;
     private String presetId;
     private double radius;
-    private String junctionStyle = "ROUNDED";
+    private String junctionStyle = null;
     private final Map<UUID, Double> edgeAngles = new HashMap<>();
 
     // Roundabout specific metadata
@@ -35,15 +37,16 @@ public final class RoadNode {
         this.type = type != null ? type : NodeType.ENDPOINT;
         this.presetId = presetId != null ? presetId : "default";
         this.radius = radius >= 0.0 ? radius : 0.0;
-        this.junctionStyle = (junctionStyle != null && !junctionStyle.isBlank()) ? junctionStyle : "ROUNDED";
-        this.outerRadius = 12.0;
-        this.innerRadius = 5.0;
+        boolean isIntersectionType = (this.type == NodeType.JUNCTION || this.type == NodeType.ROUNDABOUT);
+        this.junctionStyle = (isIntersectionType && junctionStyle != null && !junctionStyle.isBlank()) ? junctionStyle : null;
+        this.outerRadius = 23.0;
+        this.innerRadius = 13.0;
         this.ringLaneCount = 2;
         this.ringPresetId = "default";
     }
 
     public RoadNode(UUID id, Vector3d position, Vector3d tangent, NodeType type, String presetId, double radius) {
-        this(id, position, tangent, type, presetId, radius, "ROUNDED");
+        this(id, position, tangent, type, presetId, radius, null);
     }
 
     public RoadNode(UUID id, Vector3d position, Vector3d tangent) {
@@ -112,11 +115,23 @@ public final class RoadNode {
     }
 
     public String getJunctionStyle() {
-        return junctionStyle != null ? junctionStyle : "ROUNDED";
+        if (this.type != NodeType.JUNCTION && this.type != NodeType.ROUNDABOUT) {
+            return (junctionStyle != null && !junctionStyle.isBlank() && !"ROUNDABOUT".equalsIgnoreCase(junctionStyle))
+                    ? junctionStyle
+                    : "CITY";
+        }
+        if (junctionStyle != null && !junctionStyle.isBlank()) {
+            return junctionStyle;
+        }
+        ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
+        if (active != null && active.getJunctionStyle() != null) {
+            return active.getJunctionStyle().name();
+        }
+        return "CITY";
     }
 
     public void setJunctionStyle(String junctionStyle) {
-        this.junctionStyle = (junctionStyle != null && !junctionStyle.isBlank()) ? junctionStyle : "ROUNDED";
+        this.junctionStyle = (junctionStyle != null && !junctionStyle.isBlank()) ? junctionStyle : null;
     }
 
     public Map<UUID, Double> getEdgeAngles() {
@@ -175,6 +190,7 @@ public final class RoadNode {
         int count = edges.size();
         if (count <= 1) {
             this.type = NodeType.ENDPOINT;
+            this.junctionStyle = null;
             if (count == 1) {
                 this.presetId = edges.get(0).getPresetId();
             }
@@ -183,19 +199,80 @@ public final class RoadNode {
 
         if (count == 2) {
             this.type = NodeType.WAYPOINT;
+            this.junctionStyle = null;
             this.presetId = edges.get(0).getPresetId();
             return;
         }
 
-        this.type = NodeType.JUNCTION;
+        // 3+ edges: Intersection
+        boolean wasAlreadyIntersection = (this.type == NodeType.JUNCTION || this.type == NodeType.ROUNDABOUT);
+        ModularRoadPreset armPreset = null;
+        for (int idx = edges.size() - 1; idx >= 0; idx--) {
+            String pId = edges.get(idx).getPresetId();
+            ModularRoadPreset p = PresetManager.getInstance().getAllPresets().stream()
+                    .filter(pr -> pr.getId().equals(pId) || pr.getName().equals(pId))
+                    .findFirst().orElse(null);
+            if (p != null) {
+                armPreset = p;
+                break;
+            }
+        }
+        if (armPreset == null) {
+            armPreset = PresetManager.getInstance().getActivePreset();
+        }
+
         // Calculate recommended radius: max(halfWidth) + 2.0 margin
         double maxHalfW = 0.0;
         for (RoadEdge edge : edges) {
-            double w = edge.getProfile() != null ? edge.getProfile().getWidth() : 10.0;
+            double w = 0.0;
+            String pId = edge.getPresetId();
+            ModularRoadPreset p = PresetManager.getInstance().getAllPresets().stream()
+                    .filter(pr -> pr.getId().equals(pId) || pr.getName().equals(pId))
+                    .findFirst().orElse(null);
+            if (p != null) {
+                w = p.getTotalWidth();
+            } else if (edge.getProfile() != null) {
+                w = edge.getProfile().getWidth();
+            } else {
+                w = 10.0;
+            }
             maxHalfW = Math.max(maxHalfW, w / 2.0);
         }
-        if (this.radius <= 0.0) {
-            this.radius = maxHalfW + 2.0;
+
+        ModularRoadPreset.JunctionPresetStyle desiredStyle = (armPreset != null)
+                ? armPreset.getJunctionStyle()
+                : ModularRoadPreset.JunctionPresetStyle.CITY;
+
+        // If junctionStyle was explicitly configured on an already-formed intersection, respect it
+        if (wasAlreadyIntersection && this.junctionStyle != null) {
+            if ("ROUNDABOUT".equalsIgnoreCase(this.junctionStyle)) {
+                desiredStyle = ModularRoadPreset.JunctionPresetStyle.ROUNDABOUT;
+            } else if ("ROUNDED".equalsIgnoreCase(this.junctionStyle) || "REGULAR".equalsIgnoreCase(this.junctionStyle)) {
+                desiredStyle = ModularRoadPreset.JunctionPresetStyle.REGULAR;
+            } else if ("CITY".equalsIgnoreCase(this.junctionStyle)) {
+                desiredStyle = ModularRoadPreset.JunctionPresetStyle.CITY;
+            }
+        }
+
+        if (desiredStyle == ModularRoadPreset.JunctionPresetStyle.ROUNDABOUT) {
+            this.type = NodeType.ROUNDABOUT;
+            this.junctionStyle = "ROUNDABOUT";
+            this.outerRadius = 23.0;
+            this.innerRadius = 13.0;
+            this.ringLaneCount = 2;
+        } else if (desiredStyle == ModularRoadPreset.JunctionPresetStyle.REGULAR) {
+            this.type = NodeType.JUNCTION;
+            this.junctionStyle = "ROUNDED";
+            if (this.radius <= 0.0) {
+                this.radius = maxHalfW + 2.0;
+            }
+        } else {
+            // Default: CITY with pedestrian crosswalks and stop lines (Road_Perekrestok.litematic)
+            this.type = NodeType.JUNCTION;
+            this.junctionStyle = "CITY";
+            if (this.radius <= 0.0) {
+                this.radius = maxHalfW + 2.0;
+            }
         }
     }
 

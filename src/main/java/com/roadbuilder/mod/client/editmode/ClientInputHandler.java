@@ -238,7 +238,10 @@ public final class ClientInputHandler {
     }
 
     public static void sendBuildRequest(BezierCurve3D curve, UUID startNodeId, UUID endNodeId) {
-        String activePresetId = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset().getId();
+        com.roadbuilder.mod.domain.profile.ModularRoadPreset activePreset =
+                com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset();
+        String activePresetId = activePreset.getId();
+        String junctionStyle = activePreset.getJunctionStyle().name();
         C2S_RequestBuildSegmentPayload payload = new C2S_RequestBuildSegmentPayload(
                 curve.getP0(),
                 curve.getP1(),
@@ -246,7 +249,8 @@ public final class ClientInputHandler {
                 curve.getP3(),
                 Optional.ofNullable(startNodeId),
                 Optional.ofNullable(endNodeId),
-                activePresetId
+                activePresetId,
+                junctionStyle
         );
 
         PacketDistributor.sendToServer(payload);

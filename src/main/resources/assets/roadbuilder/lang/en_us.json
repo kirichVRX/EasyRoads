@@ -53,6 +53,7 @@
   "roadbuilder.overlay.adjust_hint": "§eClick LMB on a point to show movement axes!",
   "roadbuilder.overlay.status_bar": "§aPoints: §f%s §7| §eENTER§7: Build | §cRMB§7: Reset | §bCtrl+Z§7: Undo",
 
+  "roadbuilder.gui.road_settings": "Road Settings",
   "roadbuilder.gui.packs": "Packs",
   "roadbuilder.gui.presets": "Presets",
   "roadbuilder.gui.new": "+ New",

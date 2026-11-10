@@ -112,21 +112,23 @@ public final class RevoxelizationManager {
             int neighborCount = 0;
             BlockState sampleSurfaceState = null;
 
-            for (int r = 1; r <= 16; r++) {
+            for (int r = 1; r <= 48; r++) {
                 for (int dx = -r; dx <= r; dx++) {
                     for (int dz = -r; dz <= r; dz++) {
                         if (Math.abs(dx) != r && Math.abs(dz) != r) continue;
-                        long neighborKey = (((long) (x + dx)) << 32) | ((z + dz) & 0xFFFFFFFFL);
+                        int checkX = x + dx;
+                        int checkZ = z + dz;
+                        long neighborKey = (((long) checkX) << 32) | (checkZ & 0xFFFFFFFFL);
                         if (!columns.containsKey(neighborKey)) {
-                            int ny = level.getHeight(Heightmap.Types.OCEAN_FLOOR, x + dx, z + dz) - 1;
-                            BlockPos neighborCheck = new BlockPos(x + dx, ny, z + dz);
+                            int ny = RoadVoxelizer.getTrueGroundY(level, checkX, checkZ);
+                            BlockPos neighborCheck = new BlockPos(checkX, ny, checkZ);
                             if (protectedPositions == null || !protectedPositions.contains(neighborCheck)) {
                                 if (ny > level.getMinBuildHeight()) {
                                     neighborSurfaceSum += ny;
                                     neighborCount++;
                                     if (sampleSurfaceState == null) {
                                         BlockState nState = level.getBlockState(neighborCheck);
-                                        if (!nState.isAir()) {
+                                        if (!nState.isAir() && !RoadVoxelizer.isRoadBlock(level, neighborCheck, nState)) {
                                             sampleSurfaceState = nState;
                                         }
                                     }
@@ -138,19 +140,16 @@ public final class RevoxelizationManager {
                 if (neighborCount >= 4) break;
             }
 
-            int surfaceY;
+            int trueGroundY = RoadVoxelizer.getTrueGroundY(level, x, z);
+            int surfaceY = trueGroundY;
             if (neighborCount > 0) {
-                int avgNeighborY = Math.round((float) neighborSurfaceSum / neighborCount);
-                if (lowestY > avgNeighborY + 2) {
-                    surfaceY = avgNeighborY;
-                } else {
-                    surfaceY = avgNeighborY;
+                int avgNeighbor = Math.round((float) neighborSurfaceSum / neighborCount);
+                if (avgNeighbor < surfaceY) {
+                    surfaceY = avgNeighbor;
                 }
-            } else if (topSolidRoadY != Integer.MIN_VALUE) {
-                surfaceY = topSolidRoadY;
-            } else {
-                surfaceY = Math.max(lowestY, highestY - 4);
             }
+            // Safety: surfaceY must NEVER be set to an elevated road or floating structure
+            surfaceY = Math.min(surfaceY, trueGroundY);
 
             BlockState surfaceBlock = (sampleSurfaceState != null && sampleSurfaceState.isSolid()) ? sampleSurfaceState : grassState;
             BlockState subBlock = (surfaceBlock.is(Blocks.SAND) || surfaceBlock.is(Blocks.RED_SAND)) ? Blocks.SANDSTONE.defaultBlockState() : dirtState;
@@ -217,7 +216,6 @@ public final class RevoxelizationManager {
 
         // 4. For each edge, voxelize new geometry and place blocks
         for (UUID edgeId : edgeIds) {
-            savedData.clearEdgeBlocks(edgeId);
             RoadEdge edge = graph.getEdge(edgeId);
             if (edge == null) continue;
 
@@ -246,19 +244,12 @@ public final class RevoxelizationManager {
                 newOriginalBlocks.put(pos, priorOrig != null ? priorOrig : existingState);
             }
 
-            // Place new blocks in world: DO NOT place air over other active roads, and do not overwrite markings with regular asphalt!
+            // Place new blocks in world: DO NOT place air over other active roads!
             for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
                 BlockPos pos = entry.getKey();
                 BlockState state = entry.getValue();
                 if (state.isAir() && protectedPositions.contains(pos)) {
                     continue; // Preserve other road's solid blocks from being punched through by air!
-                }
-                if (protectedPositions.contains(pos)) {
-                    BlockState existing = level.getBlockState(pos);
-                    boolean existingIsMarking = existing.is(Blocks.SMOOTH_QUARTZ_STAIRS) || existing.is(Blocks.SMOOTH_QUARTZ);
-                    if (existingIsMarking && !state.is(Blocks.SMOOTH_QUARTZ_STAIRS)) {
-                        continue;
-                    }
                 }
                 level.setBlock(pos, state, Block.UPDATE_ALL);
             }

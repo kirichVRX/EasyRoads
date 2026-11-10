@@ -27,6 +27,7 @@ public final class RoadUndoManager {
             Set<UUID> affectedEdgeIds,
             Set<UUID> addedNodeIds,
             Set<UUID> addedEdgeIds,
+            List<RoadEdge> removedEdges,
             Map<UUID, Vector3d> movedNodes,
             Map<BlockPos, BlockState> previousBlocks
     ) {}
@@ -37,14 +38,26 @@ public final class RoadUndoManager {
     private RoadUndoManager() {}
 
     public static synchronized void recordPlacement(UUID playerId, UUID edgeId, UUID startNodeId, UUID endNodeId, Map<BlockPos, BlockState> previousBlocks) {
-        recordPlacement(playerId, Collections.singleton(edgeId), new HashSet<>(Arrays.asList(startNodeId, endNodeId)), Collections.singleton(edgeId), previousBlocks);
+        recordPlacement(playerId, Collections.singleton(edgeId), new HashSet<>(Arrays.asList(startNodeId, endNodeId)), Collections.singleton(edgeId), Collections.emptyList(), previousBlocks);
     }
 
     public static synchronized void recordPlacement(UUID playerId, Set<UUID> affectedEdges, Set<UUID> addedNodes, Set<UUID> addedEdges, Map<BlockPos, BlockState> previousBlocks) {
+        recordPlacement(playerId, affectedEdges, addedNodes, addedEdges, Collections.emptyList(), previousBlocks);
+    }
+
+    public static synchronized void recordPlacement(UUID playerId, Set<UUID> affectedEdges, Set<UUID> addedNodes, Set<UUID> addedEdges, List<RoadEdge> removedEdges, Map<BlockPos, BlockState> previousBlocks) {
         if (UNDO_STACK.size() >= MAX_UNDO_ENTRIES) {
             UNDO_STACK.removeFirst();
         }
-        UNDO_STACK.addLast(new UndoEntry(playerId, new HashSet<>(affectedEdges), new HashSet<>(addedNodes), new HashSet<>(addedEdges), Collections.emptyMap(), new HashMap<>(previousBlocks)));
+        UNDO_STACK.addLast(new UndoEntry(
+                playerId,
+                new HashSet<>(affectedEdges),
+                new HashSet<>(addedNodes),
+                new HashSet<>(addedEdges),
+                removedEdges != null ? new ArrayList<>(removedEdges) : Collections.emptyList(),
+                Collections.emptyMap(),
+                new HashMap<>(previousBlocks)
+        ));
         RoadBuilderMod.LOGGER.info("[RoadBuilder] Recorded road undo entry for edges {}, snapshot of {} blocks", affectedEdges, previousBlocks.size());
     }
 
@@ -53,7 +66,7 @@ public final class RoadUndoManager {
             UNDO_STACK.removeFirst();
         }
         Map<UUID, Vector3d> moved = Collections.singletonMap(nodeId, oldPos);
-        UNDO_STACK.addLast(new UndoEntry(playerId, new HashSet<>(affectedEdges), Collections.emptySet(), Collections.emptySet(), moved, new HashMap<>(previousBlocks)));
+        UNDO_STACK.addLast(new UndoEntry(playerId, new HashSet<>(affectedEdges), Collections.emptySet(), Collections.emptySet(), Collections.emptyList(), moved, new HashMap<>(previousBlocks)));
         RoadBuilderMod.LOGGER.info("[RoadBuilder] Recorded node move undo entry for node {}, snapshot of {} blocks", nodeId, previousBlocks.size());
     }
 
@@ -78,6 +91,13 @@ public final class RoadUndoManager {
             savedData.clearEdgeBlocks(edgeId);
         }
 
+        // 2b. Restore removed edges (e.g. edges split at crossing/T-junction)
+        Set<UUID> restoredEdgeIds = new HashSet<>();
+        for (RoadEdge removed : entry.removedEdges()) {
+            savedData.getGraph().addEdge(removed);
+            restoredEdgeIds.add(removed.getId());
+        }
+
         // 3. Undo added nodes (remove if orphaned)
         for (UUID nodeId : entry.addedNodeIds()) {
             RoadNode node = savedData.getGraph().getNode(nodeId);
@@ -99,9 +119,10 @@ public final class RoadUndoManager {
             }
         }
 
-        // 5. Revoxelize any remaining affected edges whose junctions/curves were affected
+        // 5. Revoxelize any remaining or restored affected edges whose junctions/curves were affected
         Set<UUID> remainingEdges = new HashSet<>(entry.affectedEdgeIds());
         remainingEdges.removeAll(entry.addedEdgeIds());
+        remainingEdges.addAll(restoredEdgeIds);
         if (!remainingEdges.isEmpty()) {
             for (UUID eId : remainingEdges) {
                 RoadEdge e = savedData.getGraph().getEdge(eId);

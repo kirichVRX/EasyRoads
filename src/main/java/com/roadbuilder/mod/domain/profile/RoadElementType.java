@@ -13,7 +13,7 @@ public enum RoadElementType {
     SIDEWALK(4),
 
     @SerializedName("curb")
-    CURB(4),
+    CURB(1),
 
     @SerializedName("lane")
     LANE(4),
@@ -56,5 +56,9 @@ public enum RoadElementType {
 
     public int getDefaultWidth() {
         return defaultWidth;
+    }
+
+    public boolean isMarking() {
+        return this == MARKING_DASHED_LONG || this == MARKING_DASHED_SHORT || this == MARKING_SOLID || this == MARKING_DOUBLE_SOLID;
     }
 }

@@ -1,20 +1,26 @@
 package com.roadbuilder.mod.server.voxelizer;
 
+import com.roadbuilder.mod.domain.geometry.BezierCurve3D;
 import com.roadbuilder.mod.domain.geometry.Vector3d;
 import com.roadbuilder.mod.domain.graph.RoadEdge;
 import com.roadbuilder.mod.domain.graph.RoadNetworkGraph;
 import com.roadbuilder.mod.domain.graph.RoadNode;
+import com.roadbuilder.mod.domain.pack.LitematicParser;
+import com.roadbuilder.mod.domain.pack.RoadPackRegistry;
 import com.roadbuilder.mod.domain.profile.ModularRoadPreset;
 import com.roadbuilder.mod.domain.profile.PresetManager;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Half;
 
 import java.util.*;
 
 /**
- * Procedural generator for circular roundabout rotary junctions.
+ * Generator for circular roundabout rotary junctions matching Road_ring.litematic 1-to-1,
+ * carving and furnishing approaches strictly for the actual connected road edges (no phantom arms).
  */
 public final class RoundaboutGenerator {
 
@@ -31,16 +37,15 @@ public final class RoundaboutGenerator {
     public static Map<BlockPos, BlockState> generateRoundabout(
             Level level, RoadNode node, List<RoadEdge> edges, RoadNetworkGraph graph) {
 
-        Map<BlockPos, BlockState> result = new HashMap<>();
+        Map<BlockPos, BlockState> surfaceMap = new HashMap<>();
 
         Vector3d center = node.getPosition();
-        double rOut = node.getOuterRadius() > 0 ? node.getOuterRadius() : 12.0;
-        double rIn = node.getInnerRadius() > 0 ? node.getInnerRadius() : 5.0;
+        double rOut = node.getOuterRadius() > 0 ? node.getOuterRadius() : 23.0;
+        double rIn = node.getInnerRadius() > 0 ? node.getInnerRadius() : 13.0;
         int roadY = (int) Math.round(center.y);
-        double sidewalkWidth = 3.0;
-        double maxDist = rOut + sidewalkWidth;
+        double sidewalkWidth = 4.0;
 
-        // Build arms (connecting road approaches)
+        // Build arms strictly from actual connected edges
         List<RoundaboutArm> arms = new ArrayList<>();
         if (edges != null) {
             for (RoadEdge edge : edges) {
@@ -67,92 +72,259 @@ public final class RoundaboutGenerator {
             }
         }
 
-        BlockState asphaltState = Blocks.GRAY_CONCRETE.defaultBlockState();
-        BlockState markingState = Blocks.WHITE_CONCRETE.defaultBlockState();
-        BlockState curbState = Blocks.SMOOTH_STONE_SLAB.defaultBlockState();
-        BlockState sidewalkState = Blocks.STONE_BRICKS.defaultBlockState();
+        BlockState asphaltState = Blocks.GRAY_CONCRETE_POWDER.defaultBlockState();
+        BlockState markingBlock = Blocks.SMOOTH_QUARTZ.defaultBlockState();
+        BlockState markingStairBase = Blocks.SMOOTH_QUARTZ_STAIRS.defaultBlockState();
+        BlockState curbStairBase = Blocks.POLISHED_ANDESITE_STAIRS.defaultBlockState();
         BlockState grassState = Blocks.GRASS_BLOCK.defaultBlockState();
+        BlockState foundationState = Blocks.STONE.defaultBlockState();
         BlockState dirtState = Blocks.DIRT.defaultBlockState();
         BlockState airState = Blocks.AIR.defaultBlockState();
 
-        int minX = (int) Math.floor(center.x - maxDist);
-        int maxX = (int) Math.ceil(center.x + maxDist);
-        int minZ = (int) Math.floor(center.z - maxDist);
-        int maxZ = (int) Math.ceil(center.z + maxDist);
+        int cX = (int) Math.floor(center.x);
+        int cZ = (int) Math.floor(center.z);
 
-        int lanes = Math.max(1, node.getRingLaneCount());
-        double ringWidth = rOut - rIn;
-        double laneWidth = ringWidth / lanes;
+        // 1. Place the circular roundabout ring (using Road_ring.litematic core when matching default radii, sealing unused cardinal gaps)
+        LitematicParser.Schematic ringSchem = RoadPackRegistry.getInstance().getActivePack().getSchematic("Road_ring");
+        if (ringSchem == null) {
+            ringSchem = RoadPackRegistry.getInstance().getActivePack().getSchematic("road_ring");
+        }
 
-        for (int bx = minX; bx <= maxX; bx++) {
-            for (int bz = minZ; bz <= maxZ; bz++) {
-                double dx = (bx + 0.5) - center.x;
-                double dz = (bz + 0.5) - center.z;
-                double dist = Math.sqrt(dx * dx + dz * dz);
+        boolean useSchematicRing = ringSchem != null
+                && Math.abs(rOut - 23.0) <= 1.5
+                && Math.abs(rIn - 13.0) <= 1.5;
 
-                if (dist > maxDist) {
-                    continue;
-                }
+        if (useSchematicRing) {
+            int sxCenter = 42;
+            int szCenter = 41;
+            double maxRingRadius = 27.5;
 
-                // Check if this column lies in an approach arm opening
-                boolean inArmRoadway = false;
-                for (RoundaboutArm arm : arms) {
-                    double dAlong = dx * arm.direction().x + dz * arm.direction().z;
-                    double dLat = Math.abs(dx * arm.normal().x + dz * arm.normal().z);
-                    if (dAlong >= rOut - 2.0 && dLat <= arm.halfRoadwayWidth()) {
-                        inArmRoadway = true;
-                        break;
+            for (int sx = 0; sx < ringSchem.getSizeX(); sx++) {
+                for (int sz = 0; sz < ringSchem.getSizeZ(); sz++) {
+                    int dx = sx - sxCenter;
+                    int dz = sz - szCenter;
+                    double dist = Math.hypot(dx, dz);
+                    // Exclude the 4 baked cardinal approach arms & corner grass squares outside the ring sidewalk
+                    if (dist > maxRingRadius) {
+                        continue;
                     }
-                }
 
-                BlockState surfaceState;
-                if (dist <= rIn - 0.5) {
-                    // Central island
-                    surfaceState = grassState;
-                } else if (dist <= rIn + 0.5) {
-                    // Inner curb border
-                    surfaceState = curbState;
-                } else if (dist <= rOut - 0.5 || inArmRoadway) {
-                    // Ring roadway
-                    surfaceState = asphaltState;
+                    int bx = cX + dx;
+                    int bz = cZ + dz;
+                    BlockPos pos = new BlockPos(bx, roadY, bz);
 
-                    // Concentric lane dashed markings
-                    if (lanes > 1 && !inArmRoadway) {
-                        for (int lane = 1; lane < lanes; lane++) {
-                            double markR = rIn + lane * laneWidth;
-                            if (Math.abs(dist - markR) <= 0.5) {
-                                double angle = Math.atan2(dz, dx);
-                                double arc = angle * markR;
-                                if (Math.floorMod((long) Math.floor(arc), 4) < 3) {
-                                    surfaceState = markingState;
-                                }
-                            }
+                    // Seal the outer ring roadway, curb & sidewalk seamlessly (replacing the 4 baked cardinal cutouts & corner flares outside dist=20.5)
+                    boolean inBakedCardinalCutout = dist >= 20.5;
+                    if (inBakedCardinalCutout) {
+                        BlockState sealedState = generateRingBlockAtRadius(bx, roadY, bz, dx, dz, dist, rIn, rOut, sidewalkWidth,
+                                2, asphaltState, markingStairBase, curbStairBase, grassState);
+                        if (sealedState != null) {
+                            surfaceMap.put(pos, sealedState);
                         }
+                        continue;
                     }
-                } else if (dist <= rOut + 0.5) {
-                    // Outer curb border
-                    surfaceState = inArmRoadway ? asphaltState : curbState;
-                } else {
-                    // Perimeter sidewalk
-                    surfaceState = inArmRoadway ? asphaltState : sidewalkState;
+
+                    BlockState s = ringSchem.getBlock(sx, 0, sz);
+                    if (!s.isAir()) {
+                        surfaceMap.put(pos, s);
+                    }
                 }
+            }
+        } else {
+            double maxRingR = rOut + sidewalkWidth + 0.5;
+            int minR = (int) Math.ceil(maxRingR);
+            int lanes = Math.max(1, node.getRingLaneCount());
 
-                BlockPos surfacePos = new BlockPos(bx, roadY, bz);
-                result.put(surfacePos, surfaceState);
-
-                // Clearance zone
-                for (int cy = roadY + 1; cy <= roadY + 4; cy++) {
-                    result.put(new BlockPos(bx, cy, bz), airState);
-                }
-
-                // Sub-surface foundation (2 blocks down)
-                BlockState subState = (surfaceState == grassState) ? dirtState : dirtState;
-                for (int fy = roadY - 1; fy >= roadY - 2; fy--) {
-                    result.put(new BlockPos(bx, fy, bz), subState);
+            for (int dx = -minR; dx <= minR; dx++) {
+                for (int dz = -minR; dz <= minR; dz++) {
+                    double dist = Math.hypot(dx, dz);
+                    if (dist > maxRingR) continue;
+                    int bx = cX + dx;
+                    int bz = cZ + dz;
+                    BlockState s = generateRingBlockAtRadius(bx, roadY, bz, dx, dz, dist, rIn, rOut, sidewalkWidth,
+                            lanes, asphaltState, markingStairBase, curbStairBase, grassState);
+                    if (s != null) {
+                        surfaceMap.put(new BlockPos(bx, roadY, bz), s);
+                    }
                 }
             }
         }
 
+        // 2. Carve & furnish ONLY the actual connected road approach arms
+        double approachEnd = rOut + 8.1;
+        for (RoundaboutArm arm : arms) {
+            double halfArmW = arm.halfWidth() + 3.0;
+            for (double along = rOut - 2.0; along <= approachEnd; along += 0.5) {
+                for (double lat = -halfArmW; lat <= halfArmW; lat += 0.5) {
+                    double wx = center.x + arm.direction().x * along + arm.normal().x * lat;
+                    double wz = center.z + arm.direction().z * along + arm.normal().z * lat;
+                    int bx = (int) Math.round(wx);
+                    int bz = (int) Math.round(wz);
+
+                    double rx = (bx + 0.5) - center.x;
+                    double rz = (bz + 0.5) - center.z;
+                    double dAlong = rx * arm.direction().x + rz * arm.direction().z;
+                    double dLat = rx * arm.normal().x + rz * arm.normal().z;
+                    double absLat = Math.abs(dLat);
+                    double distCenter = Math.hypot(rx, rz);
+
+                    if (dAlong < rOut - 1.5 || dAlong > approachEnd) continue;
+
+                    // Flare the approach curb smoothly only at the outer ring throat (without widening zebra row 1)
+                    double flare = Math.max(0.0, (rOut + 0.6 - dAlong) * 0.75);
+                    double rwEdge = arm.halfRoadwayWidth() + flare;
+
+                    BlockPos pos = new BlockPos(bx, roadY, bz);
+                    if (absLat <= rwEdge + 0.2) {
+                        if (dAlong >= rOut + 1.0 && dAlong <= rOut + 5.0 && absLat <= arm.halfRoadwayWidth() + 0.2) {
+                            // 4m zebra crosswalk matching Road_ring.litematic
+                            boolean white = JunctionGenerator.isZebraWhiteStripe(bx, bz, arm.direction(), center, rOut + 3.0, dLat);
+                            surfaceMap.put(pos, white ? markingBlock : asphaltState);
+                        } else if (dAlong >= rOut + 6.0 && dAlong <= rOut + 7.0 && dLat <= 0.25 && absLat <= arm.halfRoadwayWidth() + 0.2) {
+                            // Incoming right-hand stop line
+                            surfaceMap.put(pos, markingBlock);
+                        } else if (dAlong >= rOut + 6.0 && Math.abs(dLat) < 0.5 && Math.floorMod((long) Math.floor(dAlong), 4) < 3) {
+                            Direction dashFacing = RoadVoxelizer.facingFromVector(arm.normal().x, arm.normal().z);
+                            surfaceMap.put(pos, RoadVoxelizer.orientStairs(markingStairBase, dashFacing, Half.BOTTOM));
+                        } else {
+                            surfaceMap.put(pos, asphaltState);
+                        }
+                    } else if (dAlong >= rOut + 0.5 || distCenter >= rOut - 0.3) {
+                        if (absLat <= arm.halfRoadwayWidth() + 1.2 + flare) {
+                            // Curb stair facing outward away from approach centerline
+                            double outSign = (dLat >= 0.0) ? 1.0 : -1.0;
+                            Direction curbFacing = RoadVoxelizer.facingFromVector(arm.normal().x * outSign, arm.normal().z * outSign);
+                            surfaceMap.put(pos, RoadVoxelizer.orientStairs(curbStairBase, curbFacing, Half.BOTTOM));
+                        } else if (absLat <= arm.halfWidth() + 0.2 + flare) {
+                            // Mosaic sidewalk connecting cleanly to ring sidewalk
+                            surfaceMap.put(pos, mosaicSidewalkAt(bx, roadY, bz));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Smooth curved corner fillets between each arm and the outer ring curb
+        for (RoundaboutArm arm : arms) {
+            addApproachCornerFillet(surfaceMap, center, roadY, rOut, arm, -1.0, curbStairBase);
+            addApproachCornerFillet(surfaceMap, center, roadY, rOut, arm, 1.0, curbStairBase);
+        }
+
+        // 3. Auto-compute corner StairShapes so curved curbs wrap cleanly
+        RoadVoxelizer.resolveStairShapes(surfaceMap);
+
+        // 4. Populate final result with surface blocks, air clearance, and foundation
+        Map<BlockPos, BlockState> result = new HashMap<>(surfaceMap.size() * 6);
+        for (Map.Entry<BlockPos, BlockState> entry : surfaceMap.entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState s = entry.getValue();
+            result.put(pos, s);
+
+            for (int cy = roadY + 1; cy <= roadY + 4; cy++) {
+                result.put(new BlockPos(pos.getX(), cy, pos.getZ()), airState);
+            }
+
+            BlockState subState = (s.getBlock() == Blocks.GRASS_BLOCK) ? dirtState : foundationState;
+            for (int fy = roadY - 1; fy >= roadY - 2; fy--) {
+                result.put(new BlockPos(pos.getX(), fy, pos.getZ()), subState);
+            }
+        }
+
         return result;
+    }
+
+    private static BlockState generateRingBlockAtRadius(
+            int bx, int roadY, int bz,
+            int dx, int dz, double dist,
+            double rIn, double rOut, double sidewalkWidth, int lanes,
+            BlockState asphaltState, BlockState markingStairBase, BlockState curbStairBase, BlockState grassState) {
+
+        if (dist <= rIn - 0.5) {
+            return grassState;
+        }
+        if (dist <= rIn + 0.5) {
+            // Inner island curb: stairs face INWARD toward island center
+            Direction inFacing = RoadVoxelizer.facingFromVector(-dx, -dz);
+            return RoadVoxelizer.orientStairs(curbStairBase, inFacing, Half.BOTTOM);
+        }
+        if (dist <= rOut - 0.5) {
+            if (lanes > 1) {
+                double laneWidth = (rOut - rIn) / lanes;
+                for (int lane = 1; lane < lanes; lane++) {
+                    double markR = rIn + lane * laneWidth;
+                    double targetOrtho = (Math.abs(dx) >= Math.abs(dz))
+                            ? Math.abs(Math.abs(dx) - Math.sqrt(Math.max(0.0, markR * markR - dz * dz)))
+                            : Math.abs(Math.abs(dz) - Math.sqrt(Math.max(0.0, markR * markR - dx * dx)));
+                    if (Math.abs(dist - markR) <= 0.6 && targetOrtho <= 0.5) {
+                        double angle = Math.atan2(dz, dx);
+                        double arc = angle * markR;
+                        if (Math.floorMod((long) Math.floor(arc), 4) < 3) {
+                            Direction radFacing = RoadVoxelizer.facingFromVector(dx, dz);
+                            return RoadVoxelizer.orientStairs(markingStairBase, radFacing, Half.BOTTOM);
+                        }
+                    }
+                }
+            }
+            return asphaltState;
+        }
+        if (dist <= rOut + 0.5) {
+            // Outer ring curb: stairs face OUTWARD away from ring center
+            Direction outFacing = RoadVoxelizer.facingFromVector(dx, dz);
+            return RoadVoxelizer.orientStairs(curbStairBase, outFacing, Half.BOTTOM);
+        }
+        if (dist <= rOut + sidewalkWidth + 0.5) {
+            return mosaicSidewalkAt(bx, roadY, bz);
+        }
+        return null;
+    }
+
+    private static void addApproachCornerFillet(
+            Map<BlockPos, BlockState> surfaceMap, Vector3d center, int roadY,
+            double rOut, RoundaboutArm arm, double sideSign, BlockState curbStairBase) {
+
+        Vector3d tangent = new Vector3d(-arm.normal().x * sideSign, 0, -arm.normal().z * sideSign);
+        Vector3d dirAlong = arm.direction();
+        double baseLat = arm.halfRoadwayWidth() + 0.5;
+
+        Vector3d pRing = center.add(dirAlong.multiply(rOut - 0.5)).add(arm.normal().multiply(sideSign * (baseLat + 2.5)));
+        Vector3d pArm = center.add(dirAlong.multiply(rOut + 1.0)).add(arm.normal().multiply(sideSign * baseLat));
+        Vector3d cornerVertex = center.add(dirAlong.multiply(rOut - 0.5)).add(arm.normal().multiply(sideSign * baseLat));
+
+        BezierCurve3D fillet = new BezierCurve3D(
+                pRing,
+                pRing.add(cornerVertex.subtract(pRing).multiply(0.55)),
+                pArm.add(cornerVertex.subtract(pArm).multiply(0.55)),
+                pArm
+        );
+
+        for (int s = 0; s <= 24; s++) {
+            double t = (double) s / 24.0;
+            Vector3d pt = fillet.evaluate(t);
+            Vector3d tan = fillet.evaluateTangent(t);
+            Vector3d outNormal = new Vector3d(-tan.z * sideSign, 0, tan.x * sideSign).normalize();
+            if (outNormal.dot(arm.normal().multiply(sideSign).add(tangent.multiply(-1.0))) < 0) {
+                outNormal = outNormal.multiply(-1.0);
+            }
+            int bx = (int) Math.floor(pt.x);
+            int bz = (int) Math.floor(pt.z);
+            double distCenter = Math.hypot((bx + 0.5) - center.x, (bz + 0.5) - center.z);
+            if (distCenter >= rOut - 0.5 && distCenter <= rOut + 4.5) {
+                Direction facing = RoadVoxelizer.facingFromVector(outNormal.x, outNormal.z);
+                BlockPos pos = new BlockPos(bx, roadY, bz);
+                BlockState existing = surfaceMap.get(pos);
+                if (existing != null && existing.getBlock() != Blocks.GRAY_CONCRETE_POWDER && existing.getBlock() != Blocks.SMOOTH_QUARTZ) {
+                    surfaceMap.put(pos, RoadVoxelizer.orientStairs(curbStairBase, facing, Half.BOTTOM));
+                }
+            }
+        }
+    }
+
+    private static BlockState mosaicSidewalkAt(int bx, int y, int bz) {
+        long h = ((long) bx * 0x9E3779B97F4A7C15L) ^ ((long) bz * 0xBF58476D1CE4E5B9L) ^ ((long) y * 0x94D049BB133111EBL);
+        h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
+        h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
+        h = h ^ (h >>> 31);
+        int idx = (int) Math.floorMod(h, (long) RoadVoxelizer.SIDEWALK_MIX.length);
+        return RoadVoxelizer.SIDEWALK_MIX[idx];
     }
 }

@@ -34,7 +34,7 @@ public class RoadStackElement {
 
     public int getWidth() {
         if (type == RoadElementType.CURB) {
-            return customWidth > 0 ? Math.max(1, customWidth) : 4;
+            return customWidth > 0 ? customWidth : 1;
         }
         if (type == RoadElementType.DIVIDER_GRASS && customWidth < 5) {
             return 5;
@@ -44,9 +44,6 @@ public class RoadStackElement {
         }
         if (type == RoadElementType.MARKING_DOUBLE_SOLID && customWidth < 3) {
             return 3;
-        }
-        if (type == RoadElementType.SIDEWALK && customWidth < 4) {
-            return 4;
         }
         return customWidth > 0 ? customWidth : type.getDefaultWidth();
     }

@@ -73,7 +73,12 @@ public final class RoadPackRegistry {
                 "road_razmetka_prerivistaya_short",
                 "road_razmetka_sploshnaya",
                 "road_razmetka_sploshnaya_double",
-                "road_tunel_side"
+                "road_tunel_side",
+                "Road_estacada_opora_new",
+                "Road_estacada_profile",
+                "Road_estacada_opora_winos",
+                "Road_Perekrestok",
+                "Road_ring"
         };
         for (String key : builtinKeys) {
             String path = "/assets/roadbuilder/schematics/" + key + ".litematic";
@@ -82,6 +87,7 @@ public final class RoadPackRegistry {
                 LitematicParser.Schematic s = LitematicParser.load(stream, key);
                 if (s != null) {
                     defaultPack.putSchematic(key, s);
+                    defaultPack.putSchematic(key.toLowerCase(), s);
                 }
             }
         }
