@@ -60,16 +60,90 @@ public final class ServerPayloadHandler {
             RoadGraphSavedData savedData = RoadGraphSavedData.get(level);
             com.roadbuilder.mod.domain.graph.RoadNetworkGraph graph = savedData.getGraph();
 
-            // Select preset & apply client studio junctionStyle selection if sent
-            com.roadbuilder.mod.domain.profile.ModularRoadPreset preset = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getAllPresets().stream()
+            // Select preset & apply client studio selections onto a working copy (never mutate shared preset slots)
+            com.roadbuilder.mod.domain.profile.ModularRoadPreset basePreset = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getAllPresets().stream()
                     .filter(p -> p.getId().equals(payload.profileName()))
                     .findFirst()
                     .orElse(com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset());
+            com.roadbuilder.mod.domain.profile.ModularRoadPreset preset = basePreset.copy();
 
             if (payload.junctionStyle() != null && !payload.junctionStyle().isBlank()) {
                 try {
                     preset.setJunctionStyle(com.roadbuilder.mod.domain.profile.ModularRoadPreset.JunctionPresetStyle.valueOf(payload.junctionStyle().toUpperCase()));
                 } catch (IllegalArgumentException ignored) {}
+            }
+            if (payload.curbPalette() != null && !payload.curbPalette().isBlank()) {
+                try {
+                    preset.setCurbPalette(com.roadbuilder.mod.domain.profile.ModularRoadPreset.CurbPalette.valueOf(payload.curbPalette().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {}
+            }
+            if (payload.sidewalkPalette() != null && !payload.sidewalkPalette().isBlank()) {
+                try {
+                    preset.setSidewalkPalette(com.roadbuilder.mod.domain.profile.ModularRoadPreset.SidewalkPalette.valueOf(payload.sidewalkPalette().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {}
+            }
+            if (payload.lampStyle() != null && !payload.lampStyle().isBlank()) {
+                preset.setLampStyle(com.roadbuilder.mod.domain.profile.ModularRoadPreset.LampStyle.fromStringOrDefault(
+                        payload.lampStyle(), preset.getLampStyle()));
+            }
+            if (payload.lampSpacing() > 0) {
+                preset.setLampSpacing(payload.lampSpacing());
+            }
+            if (payload.lampStyle() != null && !payload.lampStyle().isBlank()) {
+                preset.setSidewalkDoubleLamps(payload.sidewalkDoubleLamps());
+            }
+            if (payload.lampPlacement() != null && !payload.lampPlacement().isBlank()) {
+                preset.setLampPlacement(com.roadbuilder.mod.domain.profile.ModularRoadPreset.LampPlacement.fromStringOrDefault(
+                        payload.lampPlacement(), preset.getLampPlacement()));
+            }
+            if (payload.guardrailStyle() != null && !payload.guardrailStyle().isBlank()) {
+                preset.setGuardrailStyle(com.roadbuilder.mod.domain.profile.ModularRoadPreset.GuardrailStyle.fromStringOrDefault(
+                        payload.guardrailStyle(), preset.getGuardrailStyle()));
+            }
+            preset.setNoiseWallEnabled(payload.noiseWallEnabled());
+            if (payload.stackGuardrails() != null && !payload.stackGuardrails().isBlank()) {
+                preset.applySerializedElementGuardrails(payload.stackGuardrails());
+            }
+            if (payload.stackGreenery() != null && !payload.stackGreenery().isBlank()) {
+                preset.applySerializedElementGreenery(payload.stackGreenery());
+            }
+            if (payload.treeSpacing() > 0) {
+                preset.setTreeSpacing(payload.treeSpacing());
+            }
+            if (payload.bushSpacing() > 0) {
+                preset.setBushSpacing(payload.bushSpacing());
+            }
+            if (payload.embankmentMode() != null && !payload.embankmentMode().isBlank()) {
+                try {
+                    preset.setEmbankmentMode(com.roadbuilder.mod.domain.profile.ModularRoadPreset.ToggleMode.valueOf(payload.embankmentMode().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {}
+            }
+            if (payload.embankmentShape() != null && !payload.embankmentShape().isBlank()) {
+                preset.setEmbankmentShape(com.roadbuilder.mod.domain.profile.ModularRoadPreset.EmbankmentShape.fromStringOrDefault(
+                        payload.embankmentShape(), preset.getEmbankmentShape()));
+            }
+            if (payload.embankmentMaterial() != null && !payload.embankmentMaterial().isBlank()) {
+                preset.setEmbankmentMaterial(com.roadbuilder.mod.domain.profile.ModularRoadPreset.EmbankmentMaterial.fromStringOrDefault(
+                        payload.embankmentMaterial(), preset.getEmbankmentMaterial()));
+            }
+            preset.enforceValidEmbankment();
+            if (payload.slopeMode() != null && !payload.slopeMode().isBlank()) {
+                try {
+                    preset.setSlopeMode(com.roadbuilder.mod.domain.profile.ModularRoadPreset.ToggleMode.valueOf(payload.slopeMode().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {}
+            }
+            if (payload.slopeStyle() != null && !payload.slopeStyle().isBlank()) {
+                preset.setSlopeStyle(com.roadbuilder.mod.domain.profile.ModularRoadPreset.SlopeStyle.fromStringOrDefault(
+                        payload.slopeStyle(), preset.getSlopeStyle()));
+            }
+            if (payload.slopeMaterial() != null && !payload.slopeMaterial().isBlank()) {
+                preset.setSlopeMaterial(com.roadbuilder.mod.domain.profile.ModularRoadPreset.SlopeMaterial.fromStringOrDefault(
+                        payload.slopeMaterial(), preset.getSlopeMaterial()));
+            }
+            preset.enforceValidSlope();
+            if (payload.tunnelShape() != null && !payload.tunnelShape().isBlank()) {
+                preset.setTunnelShape(com.roadbuilder.mod.domain.profile.ModularRoadPreset.TunnelShape.fromStringOrDefault(
+                        payload.tunnelShape(), preset.getTunnelShape()));
             }
 
             RoadProfile profile = RoadProfile.createDefault().withWidth(preset.getTotalWidth());
@@ -157,6 +231,7 @@ public final class ServerPayloadHandler {
             Set<UUID> newlyCreatedEdgeIds = new HashSet<>(newSubSegments.size());
             for (SubSegment seg : newSubSegments) {
                 RoadEdge e = savedData.addRoadSegment(seg.nodeA, seg.nodeB, seg.curve, profile, preset.getId());
+                e.applyStyleFromPreset(preset);
                 newlyCreatedEdges.add(e);
                 newlyCreatedEdgeIds.add(e.getId());
                 addedEdges.add(e.getId());
@@ -170,9 +245,35 @@ public final class ServerPayloadHandler {
                 }
             }
 
+            // Backfill curb/sidewalk palettes on any pre-existing untagged edges before adjacent revoxelization
+            for (RoadNode n : new RoadNode[]{startNode, endNode}) {
+                if (n != null) {
+                    for (UUID adjId : n.getConnectedEdgeIds()) {
+                        if (!addedEdges.contains(adjId)) {
+                            RoadEdge adjEdge = graph.getEdge(adjId);
+                            if (adjEdge != null) {
+                                RoadVoxelizer.inferPalettesIfMissing(level, savedData.getEdgeBlocks(adjId), adjEdge);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Collect existing adjacent edges needing revoxelization (junction arms, roundabouts, preset transitions)
             collectAdjacentEdgesToRevoxelize(graph, startNode, startExisted, preset.getId(), addedEdges, edgesToRevoxelize);
             collectAdjacentEdgesToRevoxelize(graph, endNode, endExisted, preset.getId(), addedEdges, edgesToRevoxelize);
+
+            // Clear stale blocks & registry entries for split/adjacent edges BEFORE placing new roads/junctions
+            edgesToRevoxelize.removeAll(newlyCreatedEdgeIds);
+            RevoxelizationManager.ClearState clearState = null;
+            if (!edgesToRevoxelize.isEmpty()) {
+                clearState = RevoxelizationManager.clearForRevoxelization(level, edgesToRevoxelize, graph);
+                for (Map.Entry<BlockPos, BlockState> pe : clearState.previousBlocks().entrySet()) {
+                    if (!previousBlocks.containsKey(pe.getKey())) {
+                        previousBlocks.put(pe.getKey(), pe.getValue());
+                    }
+                }
+            }
 
             // 5. Regenerate module curves and place blocks for each newly created edge
             for (RoadEdge e : newlyCreatedEdges) {
@@ -189,7 +290,10 @@ public final class ServerPayloadHandler {
                     if (!previousBlocks.containsKey(pos)) {
                         previousBlocks.put(pos, existingState);
                     }
-                    BlockState priorOrig = savedData.getOriginalBlockAt(pos);
+                    BlockState priorOrig = (clearState != null) ? clearState.knownOriginals().get(pos) : null;
+                    if (priorOrig == null) {
+                        priorOrig = savedData.getOriginalBlockAt(pos);
+                    }
                     originalBlocks.put(pos, priorOrig != null ? priorOrig : existingState);
                 }
 
@@ -206,11 +310,10 @@ public final class ServerPayloadHandler {
                 savedData.registerEdgeOriginalBlocks(e.getId(), originalBlocks);
             }
 
-            // 6. Revoxelize split halves & adjacent junction/roundabout arms (exclude only newly created segments already voxelized in step 5)
-            edgesToRevoxelize.removeAll(newlyCreatedEdgeIds);
-            if (!edgesToRevoxelize.isEmpty()) {
-                Map<BlockPos, BlockState> revoxPrev = RevoxelizationManager.revoxelize(level, edgesToRevoxelize, graph);
-                for (Map.Entry<BlockPos, BlockState> pe : revoxPrev.entrySet()) {
+            // 6. Rebuild split halves & adjacent junction/roundabout arms on the cleared world
+            if (clearState != null && !clearState.edgeIds().isEmpty()) {
+                RevoxelizationManager.rebuildClearedEdges(level, clearState, graph);
+                for (Map.Entry<BlockPos, BlockState> pe : clearState.previousBlocks().entrySet()) {
                     if (!previousBlocks.containsKey(pe.getKey())) {
                         previousBlocks.put(pe.getKey(), pe.getValue());
                     }
@@ -424,17 +527,22 @@ public final class ServerPayloadHandler {
             }
         }
 
+        RoadVoxelizer.inferPalettesIfMissing(level, oldBlocks, existingEdge);
+
         removedEdges.add(existingEdge);
         graph.removeEdge(existingEdge.getId());
         savedData.clearEdgeBlocks(existingEdge.getId());
 
         RoadEdge leftEdge = savedData.addRoadSegment(nodeA, splitNode, parts[0], existingEdge.getProfile(), existingEdge.getPresetId());
         RoadEdge rightEdge = savedData.addRoadSegment(splitNode, nodeB, parts[1], existingEdge.getProfile(), existingEdge.getPresetId());
+        leftEdge.copyStyleFrom(existingEdge);
+        rightEdge.copyStyleFrom(existingEdge);
 
-        com.roadbuilder.mod.domain.profile.ModularRoadPreset existingPreset = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getAllPresets().stream()
+        com.roadbuilder.mod.domain.profile.ModularRoadPreset existingBasePreset = com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getAllPresets().stream()
                 .filter(p -> p.getId().equals(existingEdge.getPresetId()) || p.getName().equals(existingEdge.getPresetId()))
                 .findFirst()
                 .orElse(com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset());
+        com.roadbuilder.mod.domain.profile.ModularRoadPreset existingPreset = RoadVoxelizer.resolveEffectivePreset(existingEdge, existingBasePreset);
         leftEdge.regenerateModuleCurves(
                 existingPreset,
                 com.roadbuilder.mod.domain.graph.RoadModuleCurve.getTransitionAtP0(graph, leftEdge, existingPreset),
@@ -745,7 +853,9 @@ public final class ServerPayloadHandler {
             com.roadbuilder.mod.domain.profile.TransitionProfile t0 = com.roadbuilder.mod.domain.graph.RoadModuleCurve.getTransitionAtP0(savedData.getGraph(), edge, preset);
             com.roadbuilder.mod.domain.profile.TransitionProfile t3 = com.roadbuilder.mod.domain.graph.RoadModuleCurve.getTransitionAtP3(savedData.getGraph(), edge, preset);
             List<com.roadbuilder.mod.domain.graph.RoadModuleCurve> moduleCurves = com.roadbuilder.mod.domain.graph.RoadModuleCurve.generateModuleCurves(edge.getCurve(), preset, t0, t3);
-            RoadEdge updatedEdge = new RoadEdge(edge.getId(), edge.getNodeAId(), edge.getNodeBId(), edge.getCurve(), updatedProfile, newPresetId, moduleCurves);
+            RoadEdge updatedEdge = new RoadEdge(edge.getId(), edge.getNodeAId(), edge.getNodeBId(), edge.getCurve(), updatedProfile, newPresetId,
+                    moduleCurves, preset.getCurbPalette().name(), preset.getSidewalkPalette().name());
+            updatedEdge.applyStyleFromPreset(preset);
             savedData.getGraph().addEdge(updatedEdge);
 
             RoadNode nodeA = savedData.getGraph().getNode(edge.getNodeAId());
@@ -791,6 +901,15 @@ public final class ServerPayloadHandler {
             node.setRingPresetId(payload.ringPresetId());
             node.setRadius(payload.outerRadius());
 
+            // Clear old approach blocks & lamps BEFORE placing roundabout platform
+            Set<UUID> connectedEdges = new HashSet<>(node.getConnectedEdgeIds());
+            RevoxelizationManager.ClearState clearState = null;
+            Map<BlockPos, BlockState> previousBlocks = new HashMap<>();
+            if (!connectedEdges.isEmpty()) {
+                clearState = RevoxelizationManager.clearForRevoxelization(level, connectedEdges, savedData.getGraph());
+                previousBlocks.putAll(clearState.previousBlocks());
+            }
+
             // Generate roundabout blocks
             Map<BlockPos, BlockState> blocksToSet = com.roadbuilder.mod.server.voxelizer.RoundaboutGenerator.generateRoundabout(
                     level, node, savedData.getGraph().getEdgesForNode(nodeId), savedData.getGraph()
@@ -798,13 +917,17 @@ public final class ServerPayloadHandler {
 
             // Snapshot previous blocks for undo and capture natural original terrain
             Set<BlockPos> otherActiveRoadBlocks = savedData.getAllOtherEdgeBlocks(nodeId);
-            Map<BlockPos, BlockState> previousBlocks = new HashMap<>();
             Map<BlockPos, BlockState> originalBlocks = new HashMap<>();
             for (BlockPos pos : blocksToSet.keySet()) {
                 BlockState existingState = level.getBlockState(pos);
-                previousBlocks.put(pos, existingState);
+                if (!previousBlocks.containsKey(pos)) {
+                    previousBlocks.put(pos, existingState);
+                }
 
-                BlockState priorOrig = savedData.getOriginalBlockAt(pos);
+                BlockState priorOrig = (clearState != null) ? clearState.knownOriginals().get(pos) : null;
+                if (priorOrig == null) {
+                    priorOrig = savedData.getOriginalBlockAt(pos);
+                }
                 originalBlocks.put(pos, priorOrig != null ? priorOrig : existingState);
             }
 
@@ -822,10 +945,14 @@ public final class ServerPayloadHandler {
             savedData.registerEdgeBlocks(nodeId, blocksToSet.keySet());
             savedData.registerEdgeOriginalBlocks(nodeId, originalBlocks);
 
-            // If there are connecting edges, revoxelize them so their approach cuts into the roundabout
-            Set<UUID> connectedEdges = new HashSet<>(node.getConnectedEdgeIds());
-            if (!connectedEdges.isEmpty()) {
-                RevoxelizationManager.revoxelize(level, connectedEdges, savedData.getGraph());
+            // Rebuild connecting edges so approaches trim into the roundabout cleanly
+            if (clearState != null && !clearState.edgeIds().isEmpty()) {
+                RevoxelizationManager.rebuildClearedEdges(level, clearState, savedData.getGraph());
+                for (Map.Entry<BlockPos, BlockState> pe : clearState.previousBlocks().entrySet()) {
+                    if (!previousBlocks.containsKey(pe.getKey())) {
+                        previousBlocks.put(pe.getKey(), pe.getValue());
+                    }
+                }
             }
 
             // Record undo

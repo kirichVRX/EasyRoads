@@ -63,22 +63,43 @@ public final class RoadPackRegistry {
         // 1. Load built-in bundled schematics from JAR resources
         String[] builtinKeys = {
                 "road_nasip",
+                "Road_nasip_sheben",
                 "road_obochina",
                 "road_opora",
                 "road_opora1",
                 "road_opora_perekladina",
                 "road_otkos",
+                "Road_otkos_profile_flat",
+                "Road_otkos_profile_stair",
                 "road_razdelitel_grass",
                 "road_razmetka_prerivistaya_long",
                 "road_razmetka_prerivistaya_short",
                 "road_razmetka_sploshnaya",
                 "road_razmetka_sploshnaya_double",
                 "road_tunel_side",
+                "Road_tunel_profile_circle",
+                "Road_tunel_profile_flat",
                 "Road_estacada_opora_new",
                 "Road_estacada_profile",
                 "Road_estacada_opora_winos",
                 "Road_Perekrestok",
-                "Road_ring"
+                "Road_ring",
+                "Road_light_default",
+                "Road_light_modern",
+                "Road_light_darck",
+                "Road_light_old",
+                "Road_wall_iron",
+                "Road_wall_anvil",
+                "Road_wall_bambook",
+                "Road_wall_diorite",
+                "Road_wall_glass",
+                "Road_noizewall",
+                "Road_Greens_oak",
+                "Road_Greens_palm",
+                "Road_Greens_smal",
+                "Road_Greens_topol",
+                "Road_Greens_light",
+                "Road_Greens_wall"
         };
         for (String key : builtinKeys) {
             String path = "/assets/roadbuilder/schematics/" + key + ".litematic";
@@ -107,7 +128,10 @@ public final class RoadPackRegistry {
             for (File f : files) {
                 String key = f.getName().replace(".litematic", "");
                 LitematicParser.Schematic schematic = LitematicParser.load(f);
-                pack.putSchematic(key, schematic);
+                if (schematic != null) {
+                    pack.putSchematic(key, schematic);
+                    pack.putSchematic(key.toLowerCase(), schematic);
+                }
             }
         }
     }

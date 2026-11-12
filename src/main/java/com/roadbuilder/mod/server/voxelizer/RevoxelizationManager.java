@@ -181,22 +181,26 @@ public final class RevoxelizationManager {
                 restoredCount, columns.size());
     }
 
+    public record ClearState(
+            Set<UUID> edgeIds,
+            Map<BlockPos, BlockState> previousBlocks,
+            Map<BlockPos, BlockState> knownOriginals
+    ) {}
+
     /**
-     * Completely revoxelizes a set of edges after their curves or profiles were changed.
-     * Takes an undo snapshot, restores old terrain, calculates new road blocks, places them,
-     * updates edgeBlockRegistry, and returns the snapshot map for RoadUndoManager.
+     * Clears old world blocks and registry entries for edgeIds BEFORE new intersecting roads/roundabouts
+     * are generated, preventing stale pillar/lamp blocks from surviving as half-height stubs.
      */
-    public static Map<BlockPos, BlockState> revoxelize(ServerLevel level, Set<UUID> edgeIds, RoadNetworkGraph graph) {
+    public static ClearState clearForRevoxelization(ServerLevel level, Set<UUID> edgeIds, RoadNetworkGraph graph) {
+        Map<BlockPos, BlockState> previousBlocks = new HashMap<>();
+        Map<BlockPos, BlockState> allKnownOriginals = new HashMap<>();
         if (edgeIds == null || edgeIds.isEmpty()) {
-            return Collections.emptyMap();
+            return new ClearState(Collections.emptySet(), previousBlocks, allKnownOriginals);
         }
 
         RoadGraphSavedData savedData = RoadGraphSavedData.get(level);
-        Map<BlockPos, BlockState> previousBlocks = new HashMap<>();
         Set<BlockPos> allOldPositions = new HashSet<>();
-        Map<BlockPos, BlockState> allKnownOriginals = new HashMap<>();
 
-        // 1. Gather all previously placed blocks and original blocks for these edges
         for (UUID edgeId : edgeIds) {
             Set<BlockPos> oldBlocks = savedData.getEdgeBlocks(edgeId);
             for (BlockPos pos : oldBlocks) {
@@ -208,22 +212,41 @@ public final class RevoxelizationManager {
             allKnownOriginals.putAll(savedData.getEdgeOriginalBlocks(edgeId));
         }
 
-        // 2. Protect all blocks that belong to OTHER edges in the network
         Set<BlockPos> protectedPositions = savedData.getAllOtherEdgeBlocks(edgeIds);
-
-        // 3. Restore natural terrain / original blocks in the old positions (preserving other roads)
         restoreNaturalTerrain(level, allOldPositions, protectedPositions, allKnownOriginals);
 
-        // 4. For each edge, voxelize new geometry and place blocks
+        for (UUID edgeId : edgeIds) {
+            savedData.clearEdgeBlocks(edgeId);
+        }
+
+        savedData.setDirty();
+        return new ClearState(new HashSet<>(edgeIds), previousBlocks, allKnownOriginals);
+    }
+
+    /**
+     * Regenerates and places blocks for edges previously cleared with clearForRevoxelization.
+     */
+    public static void rebuildClearedEdges(ServerLevel level, ClearState clearState, RoadNetworkGraph graph) {
+        if (clearState == null || clearState.edgeIds().isEmpty()) {
+            return;
+        }
+
+        RoadGraphSavedData savedData = RoadGraphSavedData.get(level);
+        Set<UUID> edgeIds = clearState.edgeIds();
+        Map<BlockPos, BlockState> previousBlocks = clearState.previousBlocks();
+        Map<BlockPos, BlockState> allKnownOriginals = clearState.knownOriginals();
+        Set<BlockPos> protectedPositions = savedData.getAllOtherEdgeBlocks(edgeIds);
+
         for (UUID edgeId : edgeIds) {
             RoadEdge edge = graph.getEdge(edgeId);
             if (edge == null) continue;
 
             String presetId = edge.getPresetId();
-            ModularRoadPreset preset = PresetManager.getInstance().getAllPresets().stream()
+            ModularRoadPreset basePreset = PresetManager.getInstance().getAllPresets().stream()
                     .filter(p -> p.getId().equals(presetId) || p.getName().equals(presetId))
                     .findFirst()
                     .orElse(PresetManager.getInstance().getActivePreset());
+            ModularRoadPreset preset = RoadVoxelizer.resolveEffectivePreset(edge, basePreset);
 
             com.roadbuilder.mod.domain.profile.TransitionProfile t0 = com.roadbuilder.mod.domain.graph.RoadModuleCurve.getTransitionAtP0(graph, edge, preset);
             com.roadbuilder.mod.domain.profile.TransitionProfile t3 = com.roadbuilder.mod.domain.graph.RoadModuleCurve.getTransitionAtP3(graph, edge, preset);
@@ -244,23 +267,34 @@ public final class RevoxelizationManager {
                 newOriginalBlocks.put(pos, priorOrig != null ? priorOrig : existingState);
             }
 
-            // Place new blocks in world: DO NOT place air over other active roads!
             for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
                 BlockPos pos = entry.getKey();
                 BlockState state = entry.getValue();
                 if (state.isAir() && protectedPositions.contains(pos)) {
-                    continue; // Preserve other road's solid blocks from being punched through by air!
+                    continue;
                 }
                 level.setBlock(pos, state, Block.UPDATE_ALL);
             }
 
-            // Register newly placed blocks and their original blocks
             savedData.registerEdgeBlocks(edgeId, newBlocks.keySet());
             savedData.registerEdgeOriginalBlocks(edgeId, newOriginalBlocks);
         }
 
         savedData.setDirty();
-        return previousBlocks;
+    }
+
+    /**
+     * Completely revoxelizes a set of edges after their curves or profiles were changed.
+     * Takes an undo snapshot, restores old terrain, calculates new road blocks, places them,
+     * updates edgeBlockRegistry, and returns the snapshot map for RoadUndoManager.
+     */
+    public static Map<BlockPos, BlockState> revoxelize(ServerLevel level, Set<UUID> edgeIds, RoadNetworkGraph graph) {
+        if (edgeIds == null || edgeIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        ClearState clearState = clearForRevoxelization(level, edgeIds, graph);
+        rebuildClearedEdges(level, clearState, graph);
+        return clearState.previousBlocks();
     }
 
     /**
@@ -349,6 +383,7 @@ public final class RevoxelizationManager {
             com.roadbuilder.mod.domain.profile.TransitionProfile t3 = com.roadbuilder.mod.domain.graph.RoadModuleCurve.getTransitionAtP3(graph, edge, edgePreset);
             List<com.roadbuilder.mod.domain.graph.RoadModuleCurve> moduleCurves = com.roadbuilder.mod.domain.graph.RoadModuleCurve.generateModuleCurves(newCurve, edgePreset, t0, t3);
             RoadEdge updatedEdge = new RoadEdge(edge.getId(), edge.getNodeAId(), edge.getNodeBId(), newCurve, edge.getProfile(), edge.getPresetId(), moduleCurves);
+            updatedEdge.copyStyleFrom(edge);
             graph.addEdge(updatedEdge);
         }
 

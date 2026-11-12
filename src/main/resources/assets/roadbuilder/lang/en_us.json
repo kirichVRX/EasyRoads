@@ -99,6 +99,7 @@
   "roadbuilder.element.marking_solid": "Marking (solid)",
   "roadbuilder.element.marking_double_solid": "Marking (double)",
   "roadbuilder.element.divider_grass": "Median Grass",
+  "roadbuilder.element.lawn": "Lawn",
   "roadbuilder.element.shoulder": "Shoulder",
 
   "roadbuilder.pack.default": "Standard (Vanilla)",

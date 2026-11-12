@@ -99,6 +99,7 @@
   "roadbuilder.element.marking_solid": "Разметка (сплошная)",
   "roadbuilder.element.marking_double_solid": "Разметка (двойная)",
   "roadbuilder.element.divider_grass": "Газон/Разделитель",
+  "roadbuilder.element.lawn": "Газон",
   "roadbuilder.element.shoulder": "Обочина",
 
   "roadbuilder.pack.default": "Стандартный (Vanilla)",

@@ -13,6 +13,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Half;
 
@@ -31,7 +32,8 @@ public final class RoundaboutGenerator {
             Vector3d direction,
             Vector3d normal,
             double halfWidth,
-            double halfRoadwayWidth
+            double halfRoadwayWidth,
+            ModularRoadPreset preset
     ) {}
 
     public static Map<BlockPos, BlockState> generateRoundabout(
@@ -57,25 +59,30 @@ public final class RoundaboutGenerator {
                 Vector3d normal = new Vector3d(-dirXz.z, 0, dirXz.x);
 
                 String presetId = edge.getPresetId();
-                ModularRoadPreset preset = PresetManager.getInstance().getAllPresets().stream()
+                ModularRoadPreset basePreset = PresetManager.getInstance().getAllPresets().stream()
                         .filter(p -> p.getId().equals(presetId))
                         .findFirst()
                         .orElse(PresetManager.getInstance().getActivePreset());
+                ModularRoadPreset preset = RoadVoxelizer.resolveEffectivePreset(edge, basePreset);
 
                 arms.add(new RoundaboutArm(
                         edge.getId(),
                         dirXz,
                         normal,
                         preset.getTotalWidth() * 0.5,
-                        preset.getRoadwayWidth() * 0.5
+                        preset.getRoadwayWidth() * 0.5,
+                        preset
                 ));
             }
         }
 
+        ModularRoadPreset primaryPreset = !arms.isEmpty() ? arms.get(0).preset() : PresetManager.getInstance().getActivePreset();
+        ModularRoadPreset.CurbPalette ringCurbPalette = primaryPreset.getCurbPalette();
+        ModularRoadPreset.SidewalkPalette ringSidewalkPalette = primaryPreset.getSidewalkPalette();
+
         BlockState asphaltState = Blocks.GRAY_CONCRETE_POWDER.defaultBlockState();
         BlockState markingBlock = Blocks.SMOOTH_QUARTZ.defaultBlockState();
         BlockState markingStairBase = Blocks.SMOOTH_QUARTZ_STAIRS.defaultBlockState();
-        BlockState curbStairBase = Blocks.POLISHED_ANDESITE_STAIRS.defaultBlockState();
         BlockState grassState = Blocks.GRASS_BLOCK.defaultBlockState();
         BlockState foundationState = Blocks.STONE.defaultBlockState();
         BlockState dirtState = Blocks.DIRT.defaultBlockState();
@@ -117,7 +124,7 @@ public final class RoundaboutGenerator {
                     boolean inBakedCardinalCutout = dist >= 20.5;
                     if (inBakedCardinalCutout) {
                         BlockState sealedState = generateRingBlockAtRadius(bx, roadY, bz, dx, dz, dist, rIn, rOut, sidewalkWidth,
-                                2, asphaltState, markingStairBase, curbStairBase, grassState);
+                                2, asphaltState, markingStairBase, ringCurbPalette, ringSidewalkPalette, grassState);
                         if (sealedState != null) {
                             surfaceMap.put(pos, sealedState);
                         }
@@ -126,6 +133,15 @@ public final class RoundaboutGenerator {
 
                     BlockState s = ringSchem.getBlock(sx, 0, sz);
                     if (!s.isAir()) {
+                        if (s.getBlock() == Blocks.POLISHED_ANDESITE_STAIRS) {
+                            BlockState customCurb = RoadVoxelizer.pickCurbBlock(ringCurbPalette, bx, roadY, bz);
+                            if (customCurb.getBlock() instanceof StairBlock) {
+                                s = customCurb
+                                        .setValue(StairBlock.FACING, s.getValue(StairBlock.FACING))
+                                        .setValue(StairBlock.HALF, s.getValue(StairBlock.HALF))
+                                        .setValue(StairBlock.SHAPE, s.getValue(StairBlock.SHAPE));
+                            }
+                        }
                         surfaceMap.put(pos, s);
                     }
                 }
@@ -142,7 +158,7 @@ public final class RoundaboutGenerator {
                     int bx = cX + dx;
                     int bz = cZ + dz;
                     BlockState s = generateRingBlockAtRadius(bx, roadY, bz, dx, dz, dist, rIn, rOut, sidewalkWidth,
-                            lanes, asphaltState, markingStairBase, curbStairBase, grassState);
+                            lanes, asphaltState, markingStairBase, ringCurbPalette, ringSidewalkPalette, grassState);
                     if (s != null) {
                         surfaceMap.put(new BlockPos(bx, roadY, bz), s);
                     }
@@ -194,10 +210,11 @@ public final class RoundaboutGenerator {
                             // Curb stair facing outward away from approach centerline
                             double outSign = (dLat >= 0.0) ? 1.0 : -1.0;
                             Direction curbFacing = RoadVoxelizer.facingFromVector(arm.normal().x * outSign, arm.normal().z * outSign);
-                            surfaceMap.put(pos, RoadVoxelizer.orientStairs(curbStairBase, curbFacing, Half.BOTTOM));
+                            BlockState curbBase = RoadVoxelizer.pickCurbBlock(arm.preset().getCurbPalette(), bx, roadY, bz);
+                            surfaceMap.put(pos, RoadVoxelizer.orientStairs(curbBase, curbFacing, Half.BOTTOM));
                         } else if (absLat <= arm.halfWidth() + 0.2 + flare) {
-                            // Mosaic sidewalk connecting cleanly to ring sidewalk
-                            surfaceMap.put(pos, mosaicSidewalkAt(bx, roadY, bz));
+                            // Sidewalk connecting cleanly to ring sidewalk
+                            surfaceMap.put(pos, mosaicSidewalkAt(bx, roadY, bz, arm.preset().getSidewalkPalette()));
                         }
                     }
                 }
@@ -206,9 +223,12 @@ public final class RoundaboutGenerator {
 
         // Smooth curved corner fillets between each arm and the outer ring curb
         for (RoundaboutArm arm : arms) {
-            addApproachCornerFillet(surfaceMap, center, roadY, rOut, arm, -1.0, curbStairBase);
-            addApproachCornerFillet(surfaceMap, center, roadY, rOut, arm, 1.0, curbStairBase);
+            addApproachCornerFillet(surfaceMap, center, roadY, rOut, arm, -1.0, arm.preset().getCurbPalette());
+            addApproachCornerFillet(surfaceMap, center, roadY, rOut, arm, 1.0, arm.preset().getCurbPalette());
         }
+
+        // Enforce strictly 1-block-wide outer curbs (thin doubled stairs into sidewalk along diagonals/throats)
+        enforceSingleBlockOuterCurbs(surfaceMap, center, roadY, rIn, rOut, arms, ringCurbPalette, ringSidewalkPalette);
 
         // 3. Auto-compute corner StairShapes so curved curbs wrap cleanly
         RoadVoxelizer.resolveStairShapes(surfaceMap);
@@ -220,7 +240,7 @@ public final class RoundaboutGenerator {
             BlockState s = entry.getValue();
             result.put(pos, s);
 
-            for (int cy = roadY + 1; cy <= roadY + 4; cy++) {
+            for (int cy = roadY + 1; cy <= roadY + 8; cy++) {
                 result.put(new BlockPos(pos.getX(), cy, pos.getZ()), airState);
             }
 
@@ -237,15 +257,25 @@ public final class RoundaboutGenerator {
             int bx, int roadY, int bz,
             int dx, int dz, double dist,
             double rIn, double rOut, double sidewalkWidth, int lanes,
-            BlockState asphaltState, BlockState markingStairBase, BlockState curbStairBase, BlockState grassState) {
+            BlockState asphaltState, BlockState markingStairBase,
+            ModularRoadPreset.CurbPalette curbPalette,
+            ModularRoadPreset.SidewalkPalette sidewalkPalette,
+            BlockState grassState) {
 
         if (dist <= rIn - 0.5) {
             return grassState;
         }
-        if (dist <= rIn + 0.5) {
-            // Inner island curb: stairs face INWARD toward island center
-            Direction inFacing = RoadVoxelizer.facingFromVector(-dx, -dz);
-            return RoadVoxelizer.orientStairs(curbStairBase, inFacing, Half.BOTTOM);
+        if (dist <= rIn + 0.8) {
+            boolean adjToGrass = Math.hypot(dx - 1, dz) <= rIn - 0.5
+                    || Math.hypot(dx + 1, dz) <= rIn - 0.5
+                    || Math.hypot(dx, dz - 1) <= rIn - 0.5
+                    || Math.hypot(dx, dz + 1) <= rIn - 0.5;
+            if (adjToGrass) {
+                // Inner island curb: stairs face INWARD toward island center
+                Direction inFacing = RoadVoxelizer.facingFromVector(-dx, -dz);
+                BlockState curbBase = RoadVoxelizer.pickCurbBlock(curbPalette, bx, roadY, bz);
+                return RoadVoxelizer.orientStairs(curbBase, inFacing, Half.BOTTOM);
+            }
         }
         if (dist <= rOut - 0.5) {
             if (lanes > 1) {
@@ -267,20 +297,30 @@ public final class RoundaboutGenerator {
             }
             return asphaltState;
         }
-        if (dist <= rOut + 0.5) {
-            // Outer ring curb: stairs face OUTWARD away from ring center
-            Direction outFacing = RoadVoxelizer.facingFromVector(dx, dz);
-            return RoadVoxelizer.orientStairs(curbStairBase, outFacing, Half.BOTTOM);
+        if (dist <= rOut + 0.8) {
+            boolean adjToAsphalt = Math.hypot(dx - 1, dz) <= rOut - 0.5
+                    || Math.hypot(dx + 1, dz) <= rOut - 0.5
+                    || Math.hypot(dx, dz - 1) <= rOut - 0.5
+                    || Math.hypot(dx, dz + 1) <= rOut - 0.5;
+            if (adjToAsphalt) {
+                // Outer ring curb: stairs face OUTWARD away from ring center
+                Direction outFacing = RoadVoxelizer.facingFromVector(dx, dz);
+                BlockState curbBase = RoadVoxelizer.pickCurbBlock(curbPalette, bx, roadY, bz);
+                return RoadVoxelizer.orientStairs(curbBase, outFacing, Half.BOTTOM);
+            }
+            if (dist <= rOut + sidewalkWidth + 0.5) {
+                return mosaicSidewalkAt(bx, roadY, bz, sidewalkPalette);
+            }
         }
         if (dist <= rOut + sidewalkWidth + 0.5) {
-            return mosaicSidewalkAt(bx, roadY, bz);
+            return mosaicSidewalkAt(bx, roadY, bz, sidewalkPalette);
         }
         return null;
     }
 
     private static void addApproachCornerFillet(
             Map<BlockPos, BlockState> surfaceMap, Vector3d center, int roadY,
-            double rOut, RoundaboutArm arm, double sideSign, BlockState curbStairBase) {
+            double rOut, RoundaboutArm arm, double sideSign, ModularRoadPreset.CurbPalette curbPalette) {
 
         Vector3d tangent = new Vector3d(-arm.normal().x * sideSign, 0, -arm.normal().z * sideSign);
         Vector3d dirAlong = arm.direction();
@@ -313,18 +353,107 @@ public final class RoundaboutGenerator {
                 BlockPos pos = new BlockPos(bx, roadY, bz);
                 BlockState existing = surfaceMap.get(pos);
                 if (existing != null && existing.getBlock() != Blocks.GRAY_CONCRETE_POWDER && existing.getBlock() != Blocks.SMOOTH_QUARTZ) {
-                    surfaceMap.put(pos, RoadVoxelizer.orientStairs(curbStairBase, facing, Half.BOTTOM));
+                    BlockState curbBase = RoadVoxelizer.pickCurbBlock(curbPalette, bx, roadY, bz);
+                    surfaceMap.put(pos, RoadVoxelizer.orientStairs(curbBase, facing, Half.BOTTOM));
                 }
             }
         }
     }
 
-    private static BlockState mosaicSidewalkAt(int bx, int y, int bz) {
-        long h = ((long) bx * 0x9E3779B97F4A7C15L) ^ ((long) bz * 0xBF58476D1CE4E5B9L) ^ ((long) y * 0x94D049BB133111EBL);
-        h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
-        h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
-        h = h ^ (h >>> 31);
-        int idx = (int) Math.floorMod(h, (long) RoadVoxelizer.SIDEWALK_MIX.length);
-        return RoadVoxelizer.SIDEWALK_MIX[idx];
+    private static boolean isRoundaboutRoadway(BlockState s) {
+        if (s == null) return false;
+        net.minecraft.world.level.block.Block b = s.getBlock();
+        return b == Blocks.GRAY_CONCRETE_POWDER || b == Blocks.SMOOTH_QUARTZ || b == Blocks.SMOOTH_QUARTZ_STAIRS;
+    }
+
+    private static void enforceSingleBlockOuterCurbs(
+            Map<BlockPos, BlockState> surfaceMap,
+            Vector3d center,
+            int roadY,
+            double rIn,
+            double rOut,
+            List<RoundaboutArm> arms,
+            ModularRoadPreset.CurbPalette defaultCurbPalette,
+            ModularRoadPreset.SidewalkPalette defaultSidewalkPalette) {
+
+        Map<BlockPos, BlockState> updates = new HashMap<>();
+        int cX = (int) Math.floor(center.x);
+        int cZ = (int) Math.floor(center.z);
+
+        for (Map.Entry<BlockPos, BlockState> entry : surfaceMap.entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+            if (isRoundaboutRoadway(state) || state.getBlock() == Blocks.GRASS_BLOCK) {
+                continue;
+            }
+            double distCenter = Math.hypot((pos.getX() + 0.5) - center.x, (pos.getZ() + 0.5) - center.z);
+            if (distCenter <= rIn + 2.5 || distCenter > rOut + 7.0) {
+                continue;
+            }
+
+            boolean touchesRoadway = isRoundaboutRoadway(surfaceMap.get(pos.north()))
+                    || isRoundaboutRoadway(surfaceMap.get(pos.south()))
+                    || isRoundaboutRoadway(surfaceMap.get(pos.east()))
+                    || isRoundaboutRoadway(surfaceMap.get(pos.west()));
+
+            boolean isCurbStair = state.getBlock() instanceof StairBlock && state.getBlock() != Blocks.SMOOTH_QUARTZ_STAIRS;
+            if (isCurbStair && !touchesRoadway) {
+                ModularRoadPreset.SidewalkPalette swPal = pickArmSidewalkPalette(pos, center, arms, defaultSidewalkPalette);
+                updates.put(pos, mosaicSidewalkAt(pos.getX(), roadY, pos.getZ(), swPal));
+            } else if (!isCurbStair && touchesRoadway) {
+                // Convert sidewalk block touching roadway on the throat/arc into an outward-facing curb stair
+                int outDx = 0;
+                int outDz = 0;
+                if (isRoundaboutRoadway(surfaceMap.get(pos.north()))) outDz += 1;
+                if (isRoundaboutRoadway(surfaceMap.get(pos.south()))) outDz -= 1;
+                if (isRoundaboutRoadway(surfaceMap.get(pos.west()))) outDx += 1;
+                if (isRoundaboutRoadway(surfaceMap.get(pos.east()))) outDx -= 1;
+                Direction outFacing = (outDx != 0 || outDz != 0)
+                        ? RoadVoxelizer.facingFromVector(outDx, outDz)
+                        : RoadVoxelizer.facingFromVector(pos.getX() - cX, pos.getZ() - cZ);
+                ModularRoadPreset.CurbPalette cPal = pickArmCurbPalette(pos, center, arms, defaultCurbPalette);
+                BlockState curbBase = RoadVoxelizer.pickCurbBlock(cPal, pos.getX(), roadY, pos.getZ());
+                updates.put(pos, RoadVoxelizer.orientStairs(curbBase, outFacing, Half.BOTTOM));
+            }
+        }
+        surfaceMap.putAll(updates);
+    }
+
+    private static ModularRoadPreset.SidewalkPalette pickArmSidewalkPalette(
+            BlockPos pos, Vector3d center, List<RoundaboutArm> arms,
+            ModularRoadPreset.SidewalkPalette defSw) {
+        return pickClosestArm(pos, center, arms)
+                .map(a -> a.preset().getSidewalkPalette())
+                .orElse(defSw);
+    }
+
+    private static ModularRoadPreset.CurbPalette pickArmCurbPalette(
+            BlockPos pos, Vector3d center, List<RoundaboutArm> arms,
+            ModularRoadPreset.CurbPalette defCurb) {
+        return pickClosestArm(pos, center, arms)
+                .map(a -> a.preset().getCurbPalette())
+                .orElse(defCurb);
+    }
+
+    private static Optional<RoundaboutArm> pickClosestArm(BlockPos pos, Vector3d center, List<RoundaboutArm> arms) {
+        if (arms == null || arms.isEmpty()) return Optional.empty();
+        double rx = (pos.getX() + 0.5) - center.x;
+        double rz = (pos.getZ() + 0.5) - center.z;
+        RoundaboutArm best = null;
+        double bestDot = 0.70; // Within ~45 deg of arm centerline
+        for (RoundaboutArm arm : arms) {
+            double len = Math.hypot(rx, rz);
+            if (len < 1e-4) continue;
+            double dot = (rx * arm.direction().x + rz * arm.direction().z) / len;
+            if (dot > bestDot) {
+                bestDot = dot;
+                best = arm;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    private static BlockState mosaicSidewalkAt(int bx, int y, int bz, ModularRoadPreset.SidewalkPalette palette) {
+        return RoadVoxelizer.pickSidewalkBlock(palette, bx, y, bz);
     }
 }

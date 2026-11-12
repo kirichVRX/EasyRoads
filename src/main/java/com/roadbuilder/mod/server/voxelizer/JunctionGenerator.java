@@ -86,6 +86,76 @@ public final class JunctionGenerator {
             double sidewalkWidth
     ) {}
 
+    private record FilletProjection(double dist, double signedDist, Vector3d normal, double u) {}
+
+    private static final byte ZONE_NONE = 0;
+    private static final byte ZONE_ROADWAY = 1;
+    private static final byte ZONE_EXTERIOR = 2;
+
+    private static final class CellPlan {
+        byte zone = ZONE_NONE;
+        boolean roadwayMask = false;
+        boolean placeInOutput = true;
+        boolean isStopLine = false;
+        boolean isZebraStripe = false;
+        boolean isCenterDash = false;
+        Direction centerDashFacing = Direction.NORTH;
+        boolean hasCurb = false;
+        boolean hasSidewalk = false;
+        double curbWidth = 1.0;
+        double outwardDist = 0.0;
+        double outX = 0.0;
+        double outZ = 1.0;
+        ModularRoadPreset.CurbPalette curbPalette = ModularRoadPreset.CurbPalette.ANDESITE;
+        ModularRoadPreset.SidewalkPalette sidewalkPalette = ModularRoadPreset.SidewalkPalette.MOSAIC;
+        int surfaceY = 0;
+        double distCenter = 0.0;
+    }
+
+    private static FilletProjection projectOntoFillet(double px, double pz, CornerFillet cf) {
+        List<Vector3d> pts = cf.sampledPoints();
+        List<Vector3d> norms = cf.sampledNormals();
+        int n = pts.size();
+        double bestDist = Double.MAX_VALUE;
+        double bestSignedDist = -Double.MAX_VALUE;
+        Vector3d bestNormal = norms.get(0);
+        double bestU = 0.0;
+
+        for (int s = 0; s < n - 1; s++) {
+            Vector3d a = pts.get(s);
+            Vector3d b = pts.get(s + 1);
+            double abx = b.x - a.x;
+            double abz = b.z - a.z;
+            double len2 = abx * abx + abz * abz;
+            double segT = (len2 > 1e-9) ? Math.max(0.0, Math.min(1.0, ((px - a.x) * abx + (pz - a.z) * abz) / len2)) : 0.0;
+            double cx = a.x + segT * abx;
+            double cz = a.z + segT * abz;
+            double cdx = px - cx;
+            double cdz = pz - cz;
+            double d = Math.hypot(cdx, cdz);
+            if (d < bestDist) {
+                Vector3d na = norms.get(s);
+                Vector3d nb = norms.get(s + 1);
+                double nx = na.x + segT * (nb.x - na.x);
+                double nz = na.z + segT * (nb.z - na.z);
+                double nLen = Math.hypot(nx, nz);
+                Vector3d unitN = (nLen > 1e-6) ? new Vector3d(nx / nLen, 0, nz / nLen) : na;
+                bestDist = d;
+                bestSignedDist = cdx * unitN.x + cdz * unitN.z;
+                bestNormal = unitN;
+                bestU = (s + segT) / Math.max(1, n - 1);
+            }
+        }
+        return new FilletProjection(bestDist, bestSignedDist, bestNormal, bestU);
+    }
+
+    private static boolean hasRoadway4Neighbor(CellPlan[][] grid, int gx, int gz, int gridW, int gridH) {
+        return (gx > 0 && grid[gx - 1][gz] != null && grid[gx - 1][gz].roadwayMask)
+                || (gx + 1 < gridW && grid[gx + 1][gz] != null && grid[gx + 1][gz].roadwayMask)
+                || (gz > 0 && grid[gx][gz - 1] != null && grid[gx][gz - 1].roadwayMask)
+                || (gz + 1 < gridH && grid[gx][gz + 1] != null && grid[gx][gz + 1].roadwayMask);
+    }
+
     private JunctionGenerator() {}
 
     /**
@@ -237,7 +307,7 @@ public final class JunctionGenerator {
         BlockState airState = Blocks.AIR.defaultBlockState();
         BlockState stopLineState = Blocks.SMOOTH_QUARTZ.defaultBlockState();
         BlockState grassState = Blocks.GRASS_BLOCK.defaultBlockState();
-        int clearanceHeight = 4;
+        int clearanceHeight = 8;
 
         // Determine if this junction is an elevated viaduct/bridge junction
         int centerGroundY = RoadVoxelizer.getTrueGroundY(level, (int) Math.round(center.x), (int) Math.round(center.z));
@@ -293,7 +363,7 @@ public final class JunctionGenerator {
 
             BezierCurve3D curbCurve = new BezierCurve3D(q0, q1, q2, q3);
 
-            int samples = 24;
+            int samples = 48;
             List<Vector3d> pts = new ArrayList<>(samples + 1);
             List<Vector3d> norms = new ArrayList<>(samples + 1);
             Vector3d outwardRef = armI.normal().add(armJ.normal().multiply(-1.0));
@@ -332,32 +402,30 @@ public final class JunctionGenerator {
         int minZ = (int) Math.floor(center.z - scanRadius);
         int maxZ = (int) Math.ceil(center.z + scanRadius);
 
-        Map<BlockPos, BlockState> surfaceMap = new HashMap<>();
-        Map<BlockPos, Integer> surfaceYMap = new HashMap<>();
+        int gridW = maxX - minX + 1;
+        int gridH = maxZ - minZ + 1;
+        CellPlan[][] grid = new CellPlan[gridW][gridH];
 
+        // Pass 1: Classify continuous roadway domain, straight arm approaches, and corner fillet exteriors
         for (int bx = minX; bx <= maxX; bx++) {
+            int gx = bx - minX;
             for (int bz = minZ; bz <= maxZ; bz++) {
+                int gz = bz - minZ;
                 double px = bx + 0.5;
                 double pz = bz + 0.5;
                 double dx = px - center.x;
                 double dz = pz - center.z;
                 double distCenter = Math.hypot(dx, dz);
 
-                if (distCenter > scanRadius) {
+                if (distCenter > scanRadius + 1.5) {
                     continue;
                 }
 
-                boolean isStopLine = false;
-                boolean isZebraStripe = false;
-                boolean isCenterDash = false;
-                Direction centerDashFacing = Direction.NORTH;
-                boolean inCorridorRoadway = false;
-                boolean isCurb = false;
-                boolean isSidewalk = false;
-                boolean isGrass = false;
-                BlockState cornerCurb = null;
+                CellPlan plan = new CellPlan();
+                plan.distCenter = distCenter;
 
-                // 1. Check arm corridors
+                // 1a. Check straight arm roadway corridors (+2m lookahead mask so entry boundary curbs keep 4-neighbors)
+                boolean inOutputCorridor = false;
                 for (JunctionArm arm : arms) {
                     double dAlong = dx * arm.direction().x + dz * arm.direction().z;
                     double dLat = dx * arm.normal().x + dz * arm.normal().z;
@@ -365,84 +433,45 @@ public final class JunctionGenerator {
                     double armEntry = armEntries.getOrDefault(arm.edgeId(), maxArmEntry);
                     double filletEnd = filletEntries.getOrDefault(arm.edgeId(), armEntry);
 
-                    if (dAlong >= -0.5 && dAlong <= armEntry + 0.6) {
-                        if (dLat >= -arm.leftRoadwayWidth() - 0.2 && dLat <= arm.rightRoadwayWidth() + 0.2) {
+                    if (dAlong >= -0.5 && dAlong <= armEntry + 2.0 &&
+                            dLat >= -arm.leftRoadwayWidth() - 0.15 && dLat <= arm.rightRoadwayWidth() + 0.15) {
+                        plan.roadwayMask = true;
+                        if (dAlong <= armEntry + 0.6 && distCenter <= scanRadius) {
+                            plan.zone = ZONE_ROADWAY;
+                            inOutputCorridor = true;
                             if (hasCrosswalk && dAlong >= filletEnd) {
-                                // Approach section outside the corner fillet (matching Road_Perekrestok.litematic)
                                 if (dAlong >= filletEnd + 0.5 && dAlong <= filletEnd + 4.5) {
-                                    // 4-block wide zebra crosswalk: alternating quartz and asphalt stripes
                                     if (isZebraWhiteStripe(bx, bz, arm.direction(), center, filletEnd + 2.5, dLat)) {
-                                        isZebraStripe = true;
-                                    } else {
-                                        inCorridorRoadway = true;
+                                        plan.isZebraStripe = true;
                                     }
                                 } else if (dAlong >= filletEnd + 6.0 && dAlong <= filletEnd + 7.0 && dLat <= 0.25) {
-                                    // Solid stop line on incoming right-hand lane
-                                    isStopLine = true;
+                                    plan.isStopLine = true;
                                 } else if (dAlong >= filletEnd + 6.0 && Math.abs(dLat) < 0.5 && Math.floorMod((long) Math.floor(dAlong), 4) < 3) {
-                                    isCenterDash = true;
-                                    centerDashFacing = RoadVoxelizer.facingFromVector(arm.normal().x, arm.normal().z);
-                                } else {
-                                    inCorridorRoadway = true;
+                                    plan.isCenterDash = true;
+                                    plan.centerDashFacing = RoadVoxelizer.facingFromVector(arm.normal().x, arm.normal().z);
                                 }
-                            } else {
-                                inCorridorRoadway = true;
                             }
                             break;
-                        } else if (dAlong >= filletEnd) {
-                            // Straight approach curb & mosaic sidewalk strictly outside the corner fillet zone
-                            double rw = (dLat >= 0.0) ? arm.rightRoadwayWidth() : arm.leftRoadwayWidth();
-                            double totW = (dLat >= 0.0) ? arm.rightTotalWidth() : arm.leftTotalWidth();
-                            double absLat = Math.abs(dLat);
-                            if (absLat <= rw + 1.2) {
-                                if (style != JunctionStyle.FLUSH) {
-                                    isCurb = true;
-                                    double outSign = (dLat >= 0.0) ? 1.0 : -1.0;
-                                    cornerCurb = RoadVoxelizer.orientStairs(curbStairBase,
-                                            RoadVoxelizer.facingFromVector(arm.normal().x * outSign, arm.normal().z * outSign), Half.BOTTOM);
-                                }
-                                break;
-                            } else if (absLat <= totW + 0.2) {
-                                isSidewalk = true;
-                                break;
-                            }
                         }
                     }
                 }
 
-                // 2. Check corner fillets (ONLY outside the straight arm roadway corridors)
-                if (!isStopLine && !isZebraStripe && !isCenterDash && !inCorridorRoadway && !isCurb && !isSidewalk) {
-                    double maxOutwardSignedDist = -Double.MAX_VALUE;
-                    CornerFillet matchingCorner = null;
-                    Vector3d matchingNormal = null;
+                // 1b. If not inside an arm roadway corridor, check corner fillets and straight arm exteriors
+                if (!inOutputCorridor && distCenter <= scanRadius) {
                     boolean inCornerSpandrel = false;
+                    double minFilletDist = Double.MAX_VALUE;
+                    CornerFillet matchingCorner = null;
+                    FilletProjection matchingProj = null;
 
                     for (CornerFillet cf : cornerFillets) {
-                        double bestDist = Double.MAX_VALUE;
-                        double bestSignedDist = -Double.MAX_VALUE;
-                        Vector3d bestNormal = null;
-
-                        for (int s = 0; s < cf.sampledPoints().size(); s++) {
-                            Vector3d spt = cf.sampledPoints().get(s);
-                            Vector3d snorm = cf.sampledNormals().get(s);
-
-                            double cdx = px - spt.x;
-                            double cdz = pz - spt.z;
-                            double d = Math.hypot(cdx, cdz);
-                            if (d < bestDist) {
-                                bestDist = d;
-                                bestSignedDist = cdx * snorm.x + cdz * snorm.z;
-                                bestNormal = snorm;
-                            }
-                        }
-
-                        if (bestSignedDist > 0.0 && bestDist <= scanRadius) {
-                            if (bestSignedDist > maxOutwardSignedDist) {
-                                maxOutwardSignedDist = bestSignedDist;
+                        FilletProjection proj = projectOntoFillet(px, pz, cf);
+                        if (proj.signedDist() > 0.15 && proj.dist() <= scanRadius) {
+                            if (proj.dist() < minFilletDist) {
+                                minFilletDist = proj.dist();
                                 matchingCorner = cf;
-                                matchingNormal = bestNormal;
+                                matchingProj = proj;
                             }
-                        } else if (!inCornerSpandrel && bestSignedDist <= 0.0 && bestSignedDist >= -4.5 && bestDist <= 6.0) {
+                        } else if (!inCornerSpandrel && proj.signedDist() <= 0.15 && proj.signedDist() >= -4.5 && proj.dist() <= 6.5) {
                             JunctionArm cArmI = arms.get(cf.armI());
                             JunctionArm cArmJ = arms.get(cf.armJ());
                             double detIJ = cArmI.direction().x * cArmJ.direction().z - cArmI.direction().z * cArmJ.direction().x;
@@ -460,74 +489,136 @@ public final class JunctionGenerator {
                         }
                     }
 
-                    if (matchingCorner != null && maxOutwardSignedDist > 0.0) {
-                        double cornerCurbW = matchingCorner.curbWidth();
-                        double cornerSwW = matchingCorner.sidewalkWidth();
-                        double maxCornerExtent = cornerCurbW + (matchingCorner.hasSidewalk() ? cornerSwW : 0.0) + 0.4;
-
-                        if (maxOutwardSignedDist <= maxCornerExtent) {
-                            if (style == JunctionStyle.ROUNDED || style == JunctionStyle.SIGNALED || style == JunctionStyle.CITY) {
-                                if (maxOutwardSignedDist <= cornerCurbW + 0.15 && matchingCorner.hasCurb()) {
-                                    isCurb = true;
-                                    cornerCurb = RoadVoxelizer.orientStairs(curbStairBase,
-                                            RoadVoxelizer.facingFromVector(matchingNormal.x, matchingNormal.z), Half.BOTTOM);
-                                } else if (matchingCorner.hasSidewalk()) {
-                                    isSidewalk = true;
-                                } else {
-                                    isGrass = true;
-                                }
-                            } else if (style == JunctionStyle.FLUSH) {
-                                if (maxOutwardSignedDist > cornerCurbW && matchingCorner.hasSidewalk()) {
-                                    isSidewalk = true;
+                    if (inCornerSpandrel) {
+                        plan.zone = ZONE_ROADWAY;
+                        plan.roadwayMask = true;
+                    } else {
+                        // Straight arm exterior (curb / sidewalk outside corner fillet zone)
+                        double bestStraightOut = Double.MAX_VALUE;
+                        for (JunctionArm arm : arms) {
+                            double dAlong = dx * arm.direction().x + dz * arm.direction().z;
+                            double dLat = dx * arm.normal().x + dz * arm.normal().z;
+                            double armEntry = armEntries.getOrDefault(arm.edgeId(), maxArmEntry);
+                            double filletEnd = filletEntries.getOrDefault(arm.edgeId(), armEntry);
+                            if (dAlong >= filletEnd && dAlong <= armEntry + 0.6) {
+                                double rw = (dLat >= 0.0) ? arm.rightRoadwayWidth() : arm.leftRoadwayWidth();
+                                double totW = (dLat >= 0.0) ? arm.rightTotalWidth() : arm.leftTotalWidth();
+                                double absLat = Math.abs(dLat);
+                                if (absLat > rw + 0.15 && absLat <= totW + 0.2) {
+                                    double outDist = absLat - rw;
+                                    if (outDist < bestStraightOut) {
+                                        bestStraightOut = outDist;
+                                        double outSign = (dLat >= 0.0) ? 1.0 : -1.0;
+                                        double cw = getArmCurbWidth(arm);
+                                        plan.zone = ZONE_EXTERIOR;
+                                        plan.hasCurb = armHasCurb(arm);
+                                        plan.hasSidewalk = armHasSidewalk(arm);
+                                        plan.curbWidth = (cw > 0.0) ? cw : 1.0;
+                                        plan.outwardDist = outDist;
+                                        plan.outX = arm.normal().x * outSign;
+                                        plan.outZ = arm.normal().z * outSign;
+                                        plan.curbPalette = arm.preset().getCurbPalette();
+                                        plan.sidewalkPalette = arm.preset().getSidewalkPalette();
+                                    }
                                 }
                             }
                         }
-                    } else if (inCornerSpandrel) {
-                        inCorridorRoadway = true;
+
+                        // Rounded corner exterior if not claimed by a straight arm approach
+                        if (plan.zone == ZONE_NONE && matchingCorner != null && matchingProj.signedDist() > 0.15) {
+                            double cornerCurbW = matchingCorner.curbWidth();
+                            double cornerSwW = matchingCorner.sidewalkWidth();
+                            double maxCornerExtent = cornerCurbW + (matchingCorner.hasSidewalk() ? cornerSwW : 0.0) + 0.4;
+                            if (matchingProj.signedDist() <= maxCornerExtent) {
+                                JunctionArm cornerArm = (matchingProj.u() <= 0.5)
+                                        ? arms.get(matchingCorner.armI())
+                                        : arms.get(matchingCorner.armJ());
+                                plan.zone = ZONE_EXTERIOR;
+                                plan.hasCurb = matchingCorner.hasCurb();
+                                plan.hasSidewalk = matchingCorner.hasSidewalk();
+                                plan.curbWidth = cornerCurbW;
+                                plan.outwardDist = matchingProj.signedDist();
+                                plan.outX = matchingProj.normal().x;
+                                plan.outZ = matchingProj.normal().z;
+                                plan.curbPalette = cornerArm.preset().getCurbPalette();
+                                plan.sidewalkPalette = cornerArm.preset().getSidewalkPalette();
+                            }
+                        }
                     }
                 }
 
-                if (!inCorridorRoadway && !isStopLine && !isZebraStripe && !isCenterDash && !isCurb && !isSidewalk && !isGrass) {
+                if (plan.zone != ZONE_NONE || plan.roadwayMask) {
+                    if (plan.zone == ZONE_NONE) {
+                        plan.placeInOutput = false;
+                    } else {
+                        double wCenter = 1.0 / (1.0 + distCenter);
+                        double ySum = center.y * wCenter;
+                        double wSum = wCenter;
+                        for (JunctionArm arm : arms) {
+                            double dAlong = dx * arm.direction().x + dz * arm.direction().z;
+                            if (dAlong > 0.0) {
+                                double w = dAlong / maxArmEntry;
+                                ySum += arm.entryY() * w;
+                                wSum += w;
+                            }
+                        }
+                        plan.surfaceY = (int) Math.round(ySum / wSum);
+                    }
+                    grid[gx][gz] = plan;
+                }
+            }
+        }
+
+        Map<BlockPos, BlockState> surfaceMap = new HashMap<>();
+        Map<BlockPos, Integer> surfaceYMap = new HashMap<>();
+
+        // Pass 2: Materialize roadway markings & strictly 1-block-wide curbs along roadway boundaries
+        for (int gx = 0; gx < gridW; gx++) {
+            int bx = minX + gx;
+            for (int gz = 0; gz < gridH; gz++) {
+                CellPlan plan = grid[gx][gz];
+                if (plan == null || !plan.placeInOutput) {
                     continue;
                 }
+                int bz = minZ + gz;
+                int surfaceY = plan.surfaceY;
+                BlockState surfaceState = null;
 
-                // Smooth Y interpolation
-                double wCenter = 1.0 / (1.0 + distCenter);
-                double ySum = center.y * wCenter;
-                double wSum = wCenter;
-                for (JunctionArm arm : arms) {
-                    double dAlong = dx * arm.direction().x + dz * arm.direction().z;
-                    if (dAlong > 0.0) {
-                        double w = dAlong / maxArmEntry;
-                        ySum += arm.entryY() * w;
-                        wSum += w;
+                if (plan.zone == ZONE_ROADWAY) {
+                    if (plan.isStopLine || plan.isZebraStripe) {
+                        surfaceState = stopLineState;
+                    } else if (plan.isCenterDash) {
+                        surfaceState = RoadVoxelizer.orientStairs(markingStairBase, plan.centerDashFacing, Half.BOTTOM);
+                    } else {
+                        surfaceState = defaultRoadway;
+                    }
+                } else if (plan.zone == ZONE_EXTERIOR) {
+                    boolean adjacentToRoad = hasRoadway4Neighbor(grid, gx, gz, gridW, gridH);
+                    if (style == JunctionStyle.FLUSH) {
+                        if (!adjacentToRoad && plan.outwardDist > plan.curbWidth && plan.hasSidewalk) {
+                            surfaceState = RoadVoxelizer.pickSidewalkBlock(plan.sidewalkPalette, bx, surfaceY, bz);
+                        }
+                    } else {
+                        boolean isCurbBlock = plan.hasCurb && (plan.curbWidth <= 1.25
+                                ? adjacentToRoad
+                                : plan.outwardDist <= plan.curbWidth + 0.15);
+                        if (isCurbBlock) {
+                            Direction curbFacing = RoadVoxelizer.facingFromVector(plan.outX, plan.outZ);
+                            BlockState curbBase = RoadVoxelizer.pickCurbBlock(plan.curbPalette, bx, surfaceY, bz);
+                            surfaceState = RoadVoxelizer.orientStairs(curbBase, curbFacing, Half.BOTTOM);
+                        } else if (plan.hasSidewalk) {
+                            surfaceState = RoadVoxelizer.pickSidewalkBlock(plan.sidewalkPalette, bx, surfaceY, bz);
+                        } else if (!plan.hasCurb) {
+                            surfaceState = grassState;
+                        }
                     }
                 }
-                int surfaceY = (int) Math.round(ySum / wSum);
 
-                BlockState surfaceState;
-                if (isStopLine || isZebraStripe) {
-                    surfaceState = stopLineState;
-                } else if (isCenterDash) {
-                    surfaceState = RoadVoxelizer.orientStairs(markingStairBase, centerDashFacing, Half.BOTTOM);
-                } else if (isCurb) {
-                    surfaceState = cornerCurb != null ? cornerCurb : Blocks.POLISHED_ANDESITE_STAIRS.defaultBlockState();
-                } else if (isSidewalk) {
-                    long h = ((long) bx * 0x9E3779B97F4A7C15L) ^ ((long) bz * 0xBF58476D1CE4E5B9L) ^ ((long) surfaceY * 0x94D049BB133111EBL);
-                    h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
-                    h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
-                    h = h ^ (h >>> 31);
-                    int idx = (int) Math.floorMod(h, (long) RoadVoxelizer.SIDEWALK_MIX.length);
-                    surfaceState = RoadVoxelizer.SIDEWALK_MIX[idx];
-                } else if (isGrass) {
-                    surfaceState = grassState;
-                } else {
-                    surfaceState = defaultRoadway;
+                if (surfaceState != null) {
+                    BlockPos surfacePos = new BlockPos(bx, surfaceY, bz);
+                    surfaceMap.put(surfacePos, surfaceState);
+                    surfaceYMap.put(surfacePos, surfaceY);
                 }
-
-                BlockPos surfacePos = new BlockPos(bx, surfaceY, bz);
-                surfaceMap.put(surfacePos, surfaceState);
-                surfaceYMap.put(surfacePos, surfaceY);
             }
         }
 
@@ -648,10 +739,11 @@ public final class JunctionGenerator {
 
     private static ModularRoadPreset getPresetForEdge(RoadEdge edge) {
         String presetId = edge.getPresetId();
-        return PresetManager.getInstance().getAllPresets().stream()
+        ModularRoadPreset base = PresetManager.getInstance().getAllPresets().stream()
                 .filter(p -> p.getId().equals(presetId))
                 .findFirst()
                 .orElse(PresetManager.getInstance().getActivePreset());
+        return RoadVoxelizer.resolveEffectivePreset(edge, base);
     }
 
     private static double getCornerCurbWidth(JunctionArm a, JunctionArm b) {

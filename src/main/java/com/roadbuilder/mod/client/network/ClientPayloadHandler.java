@@ -56,7 +56,57 @@ public final class ClientPayloadHandler {
         for (S2C_SyncFullGraphPayload.RoadEdgeData edgeData : payload.edges()) {
             BezierCurve3D curve = new BezierCurve3D(edgeData.p0(), edgeData.p1(), edgeData.p2(), edgeData.p3());
             RoadProfile profile = RoadProfile.createDefault().withName(edgeData.profileName()).withWidth(edgeData.width());
-            RoadEdge edge = new RoadEdge(edgeData.id(), edgeData.nodeAId(), edgeData.nodeBId(), curve, profile, edgeData.presetId(), edgeData.moduleCurves());
+            RoadEdge edge = new RoadEdge(
+                    edgeData.id(), edgeData.nodeAId(), edgeData.nodeBId(), curve, profile, edgeData.presetId(),
+                    edgeData.moduleCurves(),
+                    edgeData.curbPalette() != null && !edgeData.curbPalette().isBlank() ? edgeData.curbPalette() : null,
+                    edgeData.sidewalkPalette() != null && !edgeData.sidewalkPalette().isBlank() ? edgeData.sidewalkPalette() : null
+            );
+            if (edgeData.lampStyle() != null && !edgeData.lampStyle().isBlank()) {
+                edge.setLampStyle(edgeData.lampStyle());
+                edge.setLampSpacing(edgeData.lampSpacing());
+                edge.setSidewalkDoubleLamps(edgeData.sidewalkDoubleLamps());
+                edge.setLampPlacement(edgeData.lampPlacement());
+            }
+            if (edgeData.guardrailStyle() != null && !edgeData.guardrailStyle().isBlank()) {
+                edge.setGuardrailStyle(edgeData.guardrailStyle());
+            }
+            if (edgeData.noiseWallEnabled()) {
+                edge.setNoiseWallEnabled(true);
+            }
+            if (edgeData.stackGuardrails() != null && !edgeData.stackGuardrails().isBlank()) {
+                edge.setStackGuardrails(edgeData.stackGuardrails());
+            }
+            if (edgeData.stackGreenery() != null && !edgeData.stackGreenery().isBlank()) {
+                edge.setStackGreenery(edgeData.stackGreenery());
+            }
+            if (edgeData.treeSpacing() > 0) {
+                edge.setTreeSpacing(edgeData.treeSpacing());
+            }
+            if (edgeData.bushSpacing() > 0) {
+                edge.setBushSpacing(edgeData.bushSpacing());
+            }
+            if (edgeData.embankmentMode() != null && !edgeData.embankmentMode().isBlank()) {
+                edge.setEmbankmentMode(edgeData.embankmentMode());
+            }
+            if (edgeData.embankmentShape() != null && !edgeData.embankmentShape().isBlank()) {
+                edge.setEmbankmentShape(edgeData.embankmentShape());
+            }
+            if (edgeData.embankmentMaterial() != null && !edgeData.embankmentMaterial().isBlank()) {
+                edge.setEmbankmentMaterial(edgeData.embankmentMaterial());
+            }
+            if (edgeData.slopeMode() != null && !edgeData.slopeMode().isBlank()) {
+                edge.setSlopeMode(edgeData.slopeMode());
+            }
+            if (edgeData.slopeStyle() != null && !edgeData.slopeStyle().isBlank()) {
+                edge.setSlopeStyle(edgeData.slopeStyle());
+            }
+            if (edgeData.slopeMaterial() != null && !edgeData.slopeMaterial().isBlank()) {
+                edge.setSlopeMaterial(edgeData.slopeMaterial());
+            }
+            if (edgeData.tunnelShape() != null && !edgeData.tunnelShape().isBlank()) {
+                edge.setTunnelShape(edgeData.tunnelShape());
+            }
             cache.getGraph().addEdge(edge);
         }
 

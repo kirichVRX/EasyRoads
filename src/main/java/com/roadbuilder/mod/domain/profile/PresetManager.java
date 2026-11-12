@@ -130,6 +130,56 @@ public final class PresetManager {
                     if (p.getTunnelMode() == null) {
                         p.setTunnelMode(ModularRoadPreset.Mode.AUTO);
                     }
+                    if (p.getLampStyle() == null) {
+                        p.setLampStyle(ModularRoadPreset.LampStyle.DEFAULT);
+                    }
+                    if (p.getLampPlacement() == null) {
+                        p.setLampPlacement(ModularRoadPreset.LampPlacement.BOTH_SIDES);
+                    }
+                    if (p.getGuardrailStyle() == null) {
+                        p.setGuardrailStyle(ModularRoadPreset.GuardrailStyle.NONE);
+                    }
+                    if (p.getEmbankmentShape() == null) {
+                        p.setEmbankmentShape(ModularRoadPreset.EmbankmentShape.STEPPED);
+                    }
+                    if (p.getEmbankmentMaterial() == null) {
+                        p.setEmbankmentMaterial(ModularRoadPreset.EmbankmentMaterial.EARTH);
+                    }
+                    p.enforceValidEmbankment();
+                    if (p.getSlopeStyle() == null) {
+                        p.setSlopeStyle(ModularRoadPreset.SlopeStyle.STAIR);
+                    }
+                    if (p.getSlopeMaterial() == null) {
+                        p.setSlopeMaterial(ModularRoadPreset.SlopeMaterial.WORLD);
+                    }
+                    p.enforceValidSlope();
+                    if (p.getTunnelShape() == null) {
+                        p.setTunnelShape(ModularRoadPreset.TunnelShape.CIRCLE);
+                    } else {
+                        p.setTunnelShape(ModularRoadPreset.TunnelShape.fromStringOrDefault(
+                                p.getTunnelShape().name(), ModularRoadPreset.TunnelShape.CIRCLE));
+                    }
+                    if (p.getStack() != null) {
+                        for (RoadStackElement el : p.getStack()) {
+                            if (el.getGuardrail() == null) {
+                                el.setGuardrail(ModularRoadPreset.GuardrailPlacement.NONE);
+                            }
+                            if (el.getRawGuardrailStyle() == null) {
+                                el.setGuardrailStyle(el.getGuardrail() != ModularRoadPreset.GuardrailPlacement.NONE
+                                        ? p.getGuardrailStyle()
+                                        : ModularRoadPreset.GuardrailStyle.NONE);
+                            }
+                            if (el.getGreenery() == null) {
+                                el.setGreenery(ModularRoadPreset.GuardrailPlacement.NONE);
+                            }
+                            if (el.getGreeneryStyle() == null) {
+                                el.setGreeneryStyle(ModularRoadPreset.GreeneryStyle.NONE);
+                            } else if (!el.getGreeneryStyle().isAllowedFor(el.getType())) {
+                                el.setGreeneryStyle(ModularRoadPreset.GreeneryStyle.NONE);
+                                el.setGreenery(ModularRoadPreset.GuardrailPlacement.NONE);
+                            }
+                        }
+                    }
                     presets.put(p.getId(), p);
                 }
                 if (!presets.containsKey(activePresetId)) {

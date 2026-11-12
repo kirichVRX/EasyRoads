@@ -33,6 +33,9 @@ public enum RoadElementType {
     @SerializedName("divider_grass")
     DIVIDER_GRASS(5),
 
+    @SerializedName("lawn")
+    LAWN(2),
+
     @SerializedName("shoulder")
     SHOULDER(3);
 
@@ -60,5 +63,17 @@ public enum RoadElementType {
 
     public boolean isMarking() {
         return this == MARKING_DASHED_LONG || this == MARKING_DASHED_SHORT || this == MARKING_SOLID || this == MARKING_DOUBLE_SOLID;
+    }
+
+    public boolean supportsTrees() {
+        return this == SIDEWALK || this == LAWN || this == DIVIDER_GRASS;
+    }
+
+    public boolean supportsBushes() {
+        return this == SIDEWALK || this == LAWN || this == DIVIDER_GRASS || this == SHOULDER;
+    }
+
+    public boolean supportsGreenery() {
+        return supportsTrees() || supportsBushes();
     }
 }

@@ -46,7 +46,26 @@ public record S2C_SyncFullGraphPayload(
             String profileName,
             double width,
             String presetId,
-            List<RoadModuleCurve> moduleCurves
+            List<RoadModuleCurve> moduleCurves,
+            String curbPalette,
+            String sidewalkPalette,
+            String lampStyle,
+            int lampSpacing,
+            boolean sidewalkDoubleLamps,
+            String lampPlacement,
+            String guardrailStyle,
+            boolean noiseWallEnabled,
+            String stackGuardrails,
+            String stackGreenery,
+            int treeSpacing,
+            int bushSpacing,
+            String embankmentMode,
+            String embankmentShape,
+            String embankmentMaterial,
+            String slopeMode,
+            String slopeStyle,
+            String slopeMaterial,
+            String tunnelShape
     ) {}
 
     public static S2C_SyncFullGraphPayload fromGraph(RoadNetworkGraph graph) {
@@ -68,7 +87,26 @@ public record S2C_SyncFullGraphPayload(
                     edge.getCurve().getP0(), edge.getCurve().getP1(), edge.getCurve().getP2(), edge.getCurve().getP3(),
                     edge.getProfile().getName(), edge.getProfile().getWidth(),
                     edge.getPresetId() != null ? edge.getPresetId() : "default",
-                    edge.getModuleCurves()
+                    edge.getModuleCurves(),
+                    edge.getCurbPalette() != null ? edge.getCurbPalette() : "",
+                    edge.getSidewalkPalette() != null ? edge.getSidewalkPalette() : "",
+                    edge.getLampStyle() != null ? edge.getLampStyle() : "",
+                    edge.getLampSpacing(),
+                    edge.getSidewalkDoubleLamps() != null && edge.getSidewalkDoubleLamps(),
+                    edge.getLampPlacement() != null ? edge.getLampPlacement() : "",
+                    edge.getGuardrailStyle() != null ? edge.getGuardrailStyle() : "",
+                    edge.getNoiseWallEnabled() != null && edge.getNoiseWallEnabled(),
+                    edge.getStackGuardrails() != null ? edge.getStackGuardrails() : "",
+                    edge.getStackGreenery() != null ? edge.getStackGreenery() : "",
+                    edge.getTreeSpacing(),
+                    edge.getBushSpacing(),
+                    edge.getEmbankmentMode() != null ? edge.getEmbankmentMode() : "",
+                    edge.getEmbankmentShape() != null ? edge.getEmbankmentShape() : "",
+                    edge.getEmbankmentMaterial() != null ? edge.getEmbankmentMaterial() : "",
+                    edge.getSlopeMode() != null ? edge.getSlopeMode() : "",
+                    edge.getSlopeStyle() != null ? edge.getSlopeStyle() : "",
+                    edge.getSlopeMaterial() != null ? edge.getSlopeMaterial() : "",
+                    edge.getTunnelShape() != null ? edge.getTunnelShape() : ""
             ));
         }
 
@@ -120,6 +158,25 @@ public record S2C_SyncFullGraphPayload(
             buf.writeUtf(edge.profileName());
             buf.writeDouble(edge.width());
             buf.writeUtf(edge.presetId());
+            buf.writeUtf(edge.curbPalette() != null ? edge.curbPalette() : "");
+            buf.writeUtf(edge.sidewalkPalette() != null ? edge.sidewalkPalette() : "");
+            buf.writeUtf(edge.lampStyle() != null ? edge.lampStyle() : "");
+            buf.writeVarInt(edge.lampSpacing());
+            buf.writeBoolean(edge.sidewalkDoubleLamps());
+            buf.writeUtf(edge.lampPlacement() != null ? edge.lampPlacement() : "");
+            buf.writeUtf(edge.guardrailStyle() != null ? edge.guardrailStyle() : "");
+            buf.writeBoolean(edge.noiseWallEnabled());
+            buf.writeUtf(edge.stackGuardrails() != null ? edge.stackGuardrails() : "");
+            buf.writeUtf(edge.stackGreenery() != null ? edge.stackGreenery() : "");
+            buf.writeVarInt(edge.treeSpacing());
+            buf.writeVarInt(edge.bushSpacing());
+            buf.writeUtf(edge.embankmentMode() != null ? edge.embankmentMode() : "");
+            buf.writeUtf(edge.embankmentShape() != null ? edge.embankmentShape() : "");
+            buf.writeUtf(edge.embankmentMaterial() != null ? edge.embankmentMaterial() : "");
+            buf.writeUtf(edge.slopeMode() != null ? edge.slopeMode() : "");
+            buf.writeUtf(edge.slopeStyle() != null ? edge.slopeStyle() : "");
+            buf.writeUtf(edge.slopeMaterial() != null ? edge.slopeMaterial() : "");
+            buf.writeUtf(edge.tunnelShape() != null ? edge.tunnelShape() : "");
 
             List<RoadModuleCurve> mods = edge.moduleCurves() != null ? edge.moduleCurves() : List.of();
             buf.writeVarInt(mods.size());
@@ -173,6 +230,25 @@ public record S2C_SyncFullGraphPayload(
             String profileName = buf.readUtf();
             double width = buf.readDouble();
             String presetId = buf.readUtf();
+            String curbPalette = buf.readUtf();
+            String sidewalkPalette = buf.readUtf();
+            String lampStyle = buf.readUtf();
+            int lampSpacing = buf.readVarInt();
+            boolean sidewalkDoubleLamps = buf.readBoolean();
+            String lampPlacement = buf.readUtf();
+            String guardrailStyle = buf.readUtf();
+            boolean noiseWallEnabled = buf.readBoolean();
+            String stackGuardrails = buf.readUtf();
+            String stackGreenery = buf.readUtf();
+            int treeSpacing = buf.readVarInt();
+            int bushSpacing = buf.readVarInt();
+            String embankmentMode = buf.readUtf();
+            String embankmentShape = buf.readUtf();
+            String embankmentMaterial = buf.readUtf();
+            String slopeMode = buf.readUtf();
+            String slopeStyle = buf.readUtf();
+            String slopeMaterial = buf.readUtf();
+            String tunnelShape = buf.readUtf();
 
             int modCount = buf.readVarInt();
             List<RoadModuleCurve> moduleCurves = new ArrayList<>(modCount);
@@ -195,7 +271,12 @@ public record S2C_SyncFullGraphPayload(
                 moduleCurves.add(new RoadModuleCurve(mcId, mcType, mcWidth, mcStart, mcEnd, mcIndex, new BezierCurve3D(q0, q1, q2, q3)));
             }
 
-            edges.add(new RoadEdgeData(id, nodeAId, nodeBId, p0, p1, p2, p3, profileName, width, presetId, moduleCurves));
+            edges.add(new RoadEdgeData(id, nodeAId, nodeBId, p0, p1, p2, p3, profileName, width, presetId, moduleCurves,
+                    curbPalette, sidewalkPalette, lampStyle, lampSpacing, sidewalkDoubleLamps, lampPlacement,
+                    guardrailStyle, noiseWallEnabled, stackGuardrails,
+                    stackGreenery, treeSpacing, bushSpacing,
+                    embankmentMode, embankmentShape, embankmentMaterial,
+                    slopeMode, slopeStyle, slopeMaterial, tunnelShape));
         }
 
         return new S2C_SyncFullGraphPayload(nodes, edges);

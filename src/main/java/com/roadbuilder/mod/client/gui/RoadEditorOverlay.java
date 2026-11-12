@@ -39,33 +39,37 @@ public final class RoadEditorOverlay {
         EditTool[] tools = activePanel.getTools();
         int toolCount = tools.length;
 
-        int slotWidth = 84;
+        int slotWidth = 40;
         int slotHeight = 22;
         int padding = 4;
-        int totalWidth = Math.max(220, toolCount * slotWidth + (toolCount - 1) * padding + 8);
+        int minWidth = EditModeManager.EDIT_PANEL_ENABLED ? 220 : 0;
+        int totalWidth = Math.max(minWidth, toolCount * slotWidth + (toolCount - 1) * padding + 8);
         int startX = (screenWidth - totalWidth) / 2;
-        int startY = 4;
+        int startY = 6;
 
-        // Tab header: [Tab] BUILD | EDIT
-        int tabY = startY;
-        int tabH = 12;
-        int contentY = tabY + tabH + 2;
+        int contentY = startY;
+        if (EditModeManager.EDIT_PANEL_ENABLED) {
+            // Tab header: [Tab] BUILD | EDIT
+            int tabY = startY;
+            int tabH = 12;
+            contentY = tabY + tabH + 2;
 
-        String tabHint = "[Tab] ";
-        int hintW = mc.font.width(tabHint);
-        guiGraphics.drawString(mc.font, tabHint, startX + 4, tabY + 2, 0xFF888888, false);
+            String tabHint = "[Tab] ";
+            int hintW = mc.font.width(tabHint);
+            guiGraphics.drawString(mc.font, tabHint, startX + 4, tabY + 2, 0xFF888888, false);
 
-        String buildTab = " BUILD ";
-        int buildW = mc.font.width(buildTab);
-        boolean isBuildActive = (activePanel == EditModeManager.EditorPanel.BUILD);
-        guiGraphics.fill(startX + 4 + hintW, tabY, startX + 4 + hintW + buildW, tabY + tabH, isBuildActive ? 0xDD2E3440 : 0x661E2436);
-        guiGraphics.drawString(mc.font, buildTab, startX + 4 + hintW, tabY + 2, isBuildActive ? 0xFF88C0D0 : 0xFF888888, false);
+            String buildTab = " BUILD ";
+            int buildW = mc.font.width(buildTab);
+            boolean isBuildActive = (activePanel == EditModeManager.EditorPanel.BUILD);
+            guiGraphics.fill(startX + 4 + hintW, tabY, startX + 4 + hintW + buildW, tabY + tabH, isBuildActive ? 0xDD2E3440 : 0x661E2436);
+            guiGraphics.drawString(mc.font, buildTab, startX + 4 + hintW, tabY + 2, isBuildActive ? 0xFF88C0D0 : 0xFF888888, false);
 
-        String editTab = " EDIT ";
-        int editW = mc.font.width(editTab);
-        boolean isEditActive = (activePanel == EditModeManager.EditorPanel.EDIT);
-        guiGraphics.fill(startX + 8 + hintW + buildW, tabY, startX + 8 + hintW + buildW + editW, tabY + tabH, isEditActive ? 0xDD2E3440 : 0x661E2436);
-        guiGraphics.drawString(mc.font, editTab, startX + 8 + hintW + buildW, tabY + 2, isEditActive ? 0xFF88C0D0 : 0xFF888888, false);
+            String editTab = " EDIT ";
+            int editW = mc.font.width(editTab);
+            boolean isEditActive = (activePanel == EditModeManager.EditorPanel.EDIT);
+            guiGraphics.fill(startX + 8 + hintW + buildW, tabY, startX + 8 + hintW + buildW + editW, tabY + tabH, isEditActive ? 0xDD2E3440 : 0x661E2436);
+            guiGraphics.drawString(mc.font, editTab, startX + 8 + hintW + buildW, tabY + 2, isEditActive ? 0xFF88C0D0 : 0xFF888888, false);
+        }
 
         // Background panel for tool slots
         guiGraphics.fill(startX - 2, contentY - 2, startX + totalWidth + 2, contentY + slotHeight + 2, 0xCC111116);
@@ -95,10 +99,6 @@ public final class RoadEditorOverlay {
             int iconX = slotX + 20;
             int iconY = slotY + 3;
             guiGraphics.blit(tool.getIconLocation(), iconX, iconY, 0, 0, 16, 16, 16, 16);
-
-            // Tool label
-            int textX = slotX + 38;
-            guiGraphics.drawString(mc.font, tool.getLabel(), textX, slotY + 7, isSelected ? 0xFF88C0D0 : 0xFFD8DEE9, false);
         }
 
         // Subtitle below hotbar: description of active tool + status

@@ -25,6 +25,9 @@ import java.util.UUID;
 public final class EditModeManager {
     private static final EditModeManager INSTANCE = new EditModeManager();
 
+    // Temporarily disable EDIT panel mode while keeping implementation intact
+    public static final boolean EDIT_PANEL_ENABLED = false;
+
     private boolean editModeActive = false;
     private EditTool currentTool = EditTool.ADD_POINT;
 
@@ -109,6 +112,9 @@ public final class EditModeManager {
     }
 
     public void setActivePanel(EditorPanel panel) {
+        if (!EDIT_PANEL_ENABLED && panel == EditorPanel.EDIT) {
+            return;
+        }
         if (panel != null && this.activePanel != panel) {
             this.activePanel = panel;
             setCurrentTool(panel.getTools()[0]);
@@ -116,12 +122,23 @@ public final class EditModeManager {
     }
 
     public void togglePanel() {
+        if (!EDIT_PANEL_ENABLED) {
+            setActivePanel(EditorPanel.BUILD);
+            return;
+        }
         setActivePanel(activePanel == EditorPanel.BUILD ? EditorPanel.EDIT : EditorPanel.BUILD);
     }
 
     public void setCurrentTool(EditTool tool) {
+        boolean isEditTool = (tool == EditTool.MOVE_EXISTING_NODE
+                || tool == EditTool.DELETE_EDGE
+                || tool == EditTool.EDIT_EXISTING_EDGE
+                || tool == EditTool.CREATE_ROUNDABOUT);
+        if (!EDIT_PANEL_ENABLED && isEditTool) {
+            return;
+        }
         this.currentTool = tool;
-        if (tool == EditTool.MOVE_EXISTING_NODE || tool == EditTool.DELETE_EDGE || tool == EditTool.EDIT_EXISTING_EDGE || tool == EditTool.CREATE_ROUNDABOUT) {
+        if (isEditTool) {
             this.activePanel = EditorPanel.EDIT;
         } else {
             this.activePanel = EditorPanel.BUILD;
@@ -148,6 +165,10 @@ public final class EditModeManager {
 
     public void toggleEditMode() {
         editModeActive = !editModeActive;
+        if (editModeActive && !EDIT_PANEL_ENABLED && activePanel == EditorPanel.EDIT) {
+            activePanel = EditorPanel.BUILD;
+            currentTool = EditTool.ADD_POINT;
+        }
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
 

@@ -1,48 +1,36 @@
 package com.roadbuilder.mod.client.gui;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.roadbuilder.mod.domain.pack.LitematicParser;
+import com.roadbuilder.mod.client.cache.ClientGraphCache;
+import com.roadbuilder.mod.client.studio.StudioPreviewRenderer;
 import com.roadbuilder.mod.domain.pack.RoadPackRegistry;
 import com.roadbuilder.mod.domain.profile.*;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.block.BlockRenderDispatcher;
-import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.StairBlock;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.Half;
-import net.minecraft.world.level.block.state.properties.StairsShape;
-import org.joml.Quaternionf;
 import org.lwjgl.glfw.GLFW;
-import com.roadbuilder.mod.client.cache.ClientGraphCache;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Road Preset Studio GUI screen:
- * - 3D preview rendered at lower depth (Z = 150) behind 2D UI panels (Z = 500).
- * - Extended 3D preview length (28 blocks) without clipping.
- * - Left panel with tabs: [ Паки ] and [ Пресеты ] (with create, duplicate, delete actions).
+ * - Metaform-inspired 3D studio preview (backdrop gradient, ground grid, contact shadow, baked mesh)
+ *   rendered behind 2D UI panels (Z = 800).
+ * - Extended 3D preview length (28 blocks) with orbit, pan, cursor zoom, and double-click fit.
+ * - Left panel with tabs: [ Настройка ] and [ Пресеты ] (with create, duplicate, delete actions).
  * - Right panel with wide buttons avoiding Russian text overflow.
  * - Bottom stack with mouse drag-and-drop reordering, horizontal scrolling, and width adjustment.
  * - Mouse wheel scrolling for menus, left panel, and bottom stack.
- * - Explicit 1-block curb stairs and pure 4-block sidewalk paving.
  */
 public class RoadPresetStudioScreen extends Screen {
 
-    private float pitch = 25.0f;
-    private float yaw = -45.0f;
-    private float zoom = 16.0f;
-    private boolean isDragging3D = false;
-    private double lastMouseX;
-    private double lastMouseY;
+    private final StudioPreviewRenderer studioPreview = new StudioPreviewRenderer();
+    private boolean isDraggingOrbit = false;
+    private boolean isDraggingPan = false;
+    private long lastViewportClickMs = 0L;
+    private double lastViewportClickX = 0.0;
+    private double lastViewportClickY = 0.0;
 
     private boolean viewRoad = true;
     private boolean viewViaduct = false;
@@ -50,12 +38,15 @@ public class RoadPresetStudioScreen extends Screen {
     private boolean viewEmbankment = false;
     private boolean viewSlope = false;
 
-    // Tabs: 0 = Road Packs, 1 = Presets
+    // Tabs: 0 = Road Settings, 1 = Presets
     private int leftTab = 0;
     private float leftPanelScroll = 0.0f;
+    private int leftSettingsContentHeight = 0;
+    private static final boolean[] SECTION_COLLAPSED = new boolean[9];
 
     // Bottom stack controls
     private int selectedElementIdx = -1;
+    private int rightLayerTab = 0; // 0 = Барьеры, 1 = Зелень
     private boolean isDraggingElement = false;
     private int draggedElementIdx = -1;
     private float stackScrollX = 0.0f;
@@ -106,20 +97,38 @@ public class RoadPresetStudioScreen extends Screen {
 
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        guiGraphics.fill(0, 0, this.width, this.height, 0x66000000);
+        // Backdrop gradient is rendered by StudioPreviewRenderer before the 3D scene,
+        // so Screen.super.render() at Z=800 does not dim the 3D preview or UI panels.
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(guiGraphics, mouseX, mouseY, partialTick);
+        // Open viewport region between Left Panel (x=16..216), Right Panel (x=width-211..width-16),
+        // and Bottom Stack (y=height-76..height).
+        int vpX = 220;
+        int vpY = 16;
+        int vpW = Math.max(100, this.width - 220 - 215);
+        int vpH = Math.max(100, this.height - 96);
+        studioPreview.setViewport(vpX, vpY, vpW, vpH);
 
-        // 1. 3D Preview at lower depth Z = 150
-        render3DPreview(guiGraphics, partialTick);
+        // 1. Studio backdrop gradient, ground grid, contact shadow, and baked 3D preview (Z = 0..650)
+        studioPreview.render(
+                guiGraphics,
+                this.width,
+                this.height,
+                PresetManager.getInstance().getActivePreset(),
+                RoadPackRegistry.getInstance().getActivePack(),
+                viewRoad,
+                viewViaduct,
+                viewTunnel,
+                viewEmbankment,
+                viewSlope
+        );
 
-        // 2. 2D UI Panels at Z = 500 (Always on top of the 3D model)
+        // 2. 2D UI Panels at Z = 800 (Always on top of the 3D model)
         PoseStack pose = guiGraphics.pose();
         pose.pushPose();
-        pose.translate(0, 0, 500.0f);
+        pose.translate(0, 0, 800.0f);
 
         renderLeftPanel(guiGraphics, mouseX, mouseY);
         renderRightPanels(guiGraphics, mouseX, mouseY);
@@ -178,91 +187,128 @@ public class RoadPresetStudioScreen extends Screen {
         guiGraphics.enableScissor(x + 4, contentY, x + panelW - 4, contentY + contentH);
 
         if (leftTab == 0) {
-            // Detailed Road Configuration List
+            // Detailed Road Configuration List with collapsible sections
             ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
-            int curY = contentY - (int) leftPanelScroll;
+            int startCurY = contentY - (int) leftPanelScroll;
+            int curY = startCurY;
             int btnW = panelW - 16;
             int btnH = 20;
+            boolean inScrollArea = mouseX >= x + 4 && mouseX <= x + panelW - 4 && mouseY >= contentY && mouseY <= contentY + contentH;
 
             // 1. ПЕРЕКРЕСТКИ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ПЕРЕКРЁСТКИ");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Стиль: " + active.getJunctionStyle().getLabel(), mouseX, mouseY);
-            curY += 24;
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ПЕРЕКРЁСТКИ", SECTION_COLLAPSED[0], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[0]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Стиль: " + active.getJunctionStyle().getLabel(), mouseX, mouseY);
+                curY += 24;
+            }
 
             // 2. ФОНАРИ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОСВЕЩЕНИЕ (ФОНАРИ)");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Фонари: " + active.getLampStyle().getLabel(), mouseX, mouseY);
-            curY += 24;
-            if (active.getLampStyle() != ModularRoadPreset.LampStyle.OFF) {
-                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Шаг фонарей: " + active.getLampSpacing() + "м", mouseX, mouseY);
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОСВЕЩЕНИЕ (ФОНАРИ)", SECTION_COLLAPSED[1], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[1]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Фонари: " + active.getLampStyle().getLabel(), mouseX, mouseY);
                 curY += 24;
+                if (active.getLampStyle() != ModularRoadPreset.LampStyle.OFF) {
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Шаг фонарей: " + active.getLampSpacing() + "м", mouseX, mouseY);
+                    curY += 24;
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH,
+                            "Тротуар: " + (active.isSidewalkDoubleLamps() ? "Двусторонние" : "Односторонние"), mouseX, mouseY);
+                    curY += 24;
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Схема: " + active.getLampPlacement().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                }
             }
 
             // 3. ОГРАЖДЕНИЯ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОГРАЖДЕНИЯ");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Отбойники: " + active.getGuardrailStyle().getLabel(), mouseX, mouseY);
-            curY += 24;
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОГРАЖДЕНИЯ", SECTION_COLLAPSED[2], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[2]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Все барьеры: " + active.getGuardrailSummaryLabel(), mouseX, mouseY);
+                curY += 24;
+                drawToggleButton(guiGraphics, x + 8, curY, btnW, btnH, "Шумовой барьер", active.isNoiseWallEnabled(), mouseX, mouseY);
+                curY += 24;
+            }
 
-            // 4. ДОПЫ ДЛЯ ТРОТУАРА
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОЗЕЛЕНЕНИЕ ТРОТУАРА");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Деревья: " + (active.isTreesEnabled() ? "Вкл (" + active.getTreeSpacing() + "м)" : "Выкл"), mouseX, mouseY);
-            curY += 24;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Кусты: " + (active.isBushesEnabled() ? "Вкл (" + active.getBushSpacing() + "м)" : "Выкл"), mouseX, mouseY);
-            curY += 24;
+            // 4. ОЗЕЛЕНЕНИЕ (2-й слой: деревья и кусты)
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОЗЕЛЕНЕНИЕ", SECTION_COLLAPSED[3], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[3]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Все: " + active.getGreenerySummaryLabel(), mouseX, mouseY);
+                curY += 24;
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Шаг деревьев: " + active.getTreeSpacing() + "м", mouseX, mouseY);
+                curY += 24;
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Шаг кустов: " + active.getBushSpacing() + "м", mouseX, mouseY);
+                curY += 24;
+            }
 
             // 5. НАСЫПЬ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "НАСЫПЬ");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getEmbankmentMode().getLabel(), mouseX, mouseY);
-            curY += 24;
-            if (active.getEmbankmentMode() != ModularRoadPreset.ToggleMode.OFF) {
-                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма: " + active.getEmbankmentShape().getLabel(), mouseX, mouseY);
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "НАСЫПЬ", SECTION_COLLAPSED[4], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[4]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getEmbankmentMode().getLabel(), mouseX, mouseY);
                 curY += 24;
-                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Материал: " + active.getEmbankmentMaterial().getLabel(), mouseX, mouseY);
-                curY += 24;
+                if (active.getEmbankmentMode() != ModularRoadPreset.ToggleMode.OFF) {
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма: " + active.getEmbankmentShape().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Материал: " + active.getEmbankmentMaterial().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                }
             }
 
             // 6. ОТКОСЫ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОТКОСЫ ВЫЕМОК");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getSlopeMode().getLabel(), mouseX, mouseY);
-            curY += 24;
-            if (active.getSlopeMode() != ModularRoadPreset.ToggleMode.OFF) {
-                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма: " + active.getSlopeStyle().getLabel(), mouseX, mouseY);
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ОТКОСЫ ВЫЕМОК", SECTION_COLLAPSED[5], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[5]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getSlopeMode().getLabel(), mouseX, mouseY);
                 curY += 24;
+                if (active.getSlopeMode() != ModularRoadPreset.ToggleMode.OFF) {
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма: " + active.getSlopeStyle().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Материал: " + active.getSlopeMaterial().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                }
             }
 
             // 7. ТОННЕЛИ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ТОННЕЛИ");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getTunnelMode().getLabel(), mouseX, mouseY);
-            curY += 24;
-            if (active.getTunnelMode() != ModularRoadPreset.Mode.OFF) {
-                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма свода: " + active.getTunnelShape().getLabel(), mouseX, mouseY);
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ТОННЕЛИ", SECTION_COLLAPSED[6], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[6]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getTunnelMode().getLabel(), mouseX, mouseY);
                 curY += 24;
+                if (active.getTunnelMode() != ModularRoadPreset.Mode.OFF) {
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Форма свода: " + active.getTunnelShape().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                }
             }
 
             // 8. ЭСТАКАДЫ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ЭСТАКАДЫ (МОСТЫ)");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getViaductMode().getLabel(), mouseX, mouseY);
-            curY += 24;
-            if (active.getViaductMode() != ModularRoadPreset.Mode.OFF) {
-                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Опоры: " + active.getPillarStyle().getLabel(), mouseX, mouseY);
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "ЭСТАКАДЫ (МОСТЫ)", SECTION_COLLAPSED[7], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[7]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Режим: " + active.getViaductMode().getLabel(), mouseX, mouseY);
                 curY += 24;
+                if (active.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                    drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Опоры: " + active.getPillarStyle().getLabel(), mouseX, mouseY);
+                    curY += 24;
+                }
             }
 
             // 9. БОРДЮРЫ И ТРОТУАРЫ
-            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "БОРДЮРЫ И ТРОТУАРЫ");
-            curY += 16;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Бордюры: " + active.getCurbPalette().getLabel(), mouseX, mouseY);
-            curY += 24;
-            drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Тротуары: " + active.getSidewalkPalette().getLabel(), mouseX, mouseY);
-            curY += 24;
+            renderCategoryHeader(guiGraphics, x + 8, curY, btnW, "БОРДЮРЫ И ТРОТУАРЫ", SECTION_COLLAPSED[8], inScrollArea, mouseX, mouseY);
+            curY += 18;
+            if (!SECTION_COLLAPSED[8]) {
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Бордюры: " + active.getCurbPalette().getLabel(), mouseX, mouseY);
+                curY += 24;
+                drawSettingButton(guiGraphics, x + 8, curY, btnW, btnH, "Тротуары: " + active.getSidewalkPalette().getLabel(), mouseX, mouseY);
+                curY += 24;
+            }
+
+            this.leftSettingsContentHeight = curY - startCurY;
+            float maxScroll = Math.max(0, this.leftSettingsContentHeight - contentH);
+            if (leftPanelScroll > maxScroll) {
+                leftPanelScroll = maxScroll;
+            }
         } else {
             // Saved Presets list
             ModularRoadPreset activePreset = PresetManager.getInstance().getActivePreset();
@@ -328,9 +374,28 @@ public class RoadPresetStudioScreen extends Screen {
         }
     }
 
-    private void renderCategoryHeader(GuiGraphics guiGraphics, int x, int y, int w, String title) {
-        guiGraphics.drawString(this.font, title, x + 2, y + 4, 0xFF66B3FF, false);
-        guiGraphics.fill(x, y + 14, x + w, y + 15, 0xFF2A4A72);
+    private void renderCategoryHeader(GuiGraphics guiGraphics, int x, int y, int w, String title, boolean collapsed, boolean inScrollArea, int mouseX, int mouseY) {
+        boolean hover = inScrollArea && mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + 16;
+        if (hover) {
+            guiGraphics.fill(x, y, x + w, y + 15, 0xFF1B304F);
+        }
+        int textColor = hover ? 0xFF99D1FF : 0xFF66B3FF;
+        guiGraphics.drawString(this.font, title, x + 3, y + 4, textColor, false);
+
+        // Crisp 5px chevron on the right: '>' when collapsed, 'v' when expanded
+        int cx = x + w - 9;
+        int cy = y + 6;
+        if (collapsed) {
+            guiGraphics.fill(cx + 1, cy, cx + 2, cy + 5, textColor);
+            guiGraphics.fill(cx + 2, cy + 1, cx + 3, cy + 4, textColor);
+            guiGraphics.fill(cx + 3, cy + 2, cx + 4, cy + 3, textColor);
+        } else {
+            guiGraphics.fill(cx, cy + 1, cx + 5, cy + 2, textColor);
+            guiGraphics.fill(cx + 1, cy + 2, cx + 4, cy + 3, textColor);
+            guiGraphics.fill(cx + 2, cy + 3, cx + 3, cy + 4, textColor);
+        }
+
+        guiGraphics.fill(x, y + 15, x + w, y + 16, hover ? 0xFF4A7BB8 : 0xFF2A4A72);
     }
 
     private void renderRightPanels(GuiGraphics guiGraphics, int mouseX, int mouseY) {
@@ -357,6 +422,98 @@ public class RoadPresetStudioScreen extends Screen {
         drawToggleButton(guiGraphics, x + 8, vy + 48, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_tunnel").getString(), viewTunnel, mouseX, mouseY);
         drawToggleButton(guiGraphics, x + 8, vy + 72, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_embankment").getString(), viewEmbankment, mouseX, mouseY);
         drawToggleButton(guiGraphics, x + 8, vy + 96, panelW - 16, 20, Component.translatable("roadbuilder.gui.view_slope").getString(), viewSlope, mouseX, mouseY);
+
+        // Card 2: Настройка 2-го слоя (барьеры / озеленение) для выбранного элемента стека
+        ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
+        List<RoadStackElement> stack = active.getStack();
+        int y2 = y1 + h1 + 8;
+        if (selectedElementIdx >= 0 && selectedElementIdx < stack.size()) {
+            RoadStackElement sel = stack.get(selectedElementIdx);
+            int h2 = 100;
+
+            guiGraphics.fill(x, y2, x + panelW, y2 + h2, 0xEE1E2436);
+            guiGraphics.fill(x, y2, x + panelW, y2 + 2, 0xFF354466);
+            int tab1X = x + panelW - 102;
+            int tab2X = x + panelW - 52;
+            int tabY = y2 + 5;
+            drawPillButton(guiGraphics, tab1X, tabY, 48, 14, "Барьеры", rightLayerTab == 0, mouseX, mouseY);
+            drawPillButton(guiGraphics, tab2X, tabY, 44, 14, "Зелень", rightLayerTab == 1, mouseX, mouseY);
+
+            String title = getElementShortLabel(sel);
+            int maxTitleW = tab1X - (x + 12);
+            if (this.font.width(title) > maxTitleW) {
+                title = this.font.plainSubstrByWidth(title, Math.max(20, maxTitleW - 6)) + "...";
+            }
+            guiGraphics.drawString(this.font, title, x + 8, y2 + 8, 0xFFFFFFFF, false);
+
+            int innerW = panelW - 16;
+            int gap = 4;
+            int wRow1 = (innerW - gap) / 2;
+            int r1Y = y2 + 24;
+            int wRow2 = (innerW - gap * 2) / 3;
+            int r2Y = r1Y + 24;
+            int r3Y = r2Y + 24;
+
+            if (rightLayerTab == 0) {
+                drawPillButton(guiGraphics, x + 8, r1Y, wRow1, 20, "Нет",
+                        sel.getGuardrail() == ModularRoadPreset.GuardrailPlacement.NONE, mouseX, mouseY);
+                drawPillButton(guiGraphics, x + 8 + wRow1 + gap, r1Y, innerW - wRow1 - gap, 20, "По центру",
+                        sel.getGuardrail() == ModularRoadPreset.GuardrailPlacement.CENTER, mouseX, mouseY);
+
+                drawPillButton(guiGraphics, x + 8, r2Y, wRow2, 20, "К дороге",
+                        sel.getGuardrail() == ModularRoadPreset.GuardrailPlacement.INNER, mouseX, mouseY);
+                drawPillButton(guiGraphics, x + 8 + wRow2 + gap, r2Y, wRow2, 20, "От дороги",
+                        sel.getGuardrail() == ModularRoadPreset.GuardrailPlacement.OUTER, mouseX, mouseY);
+                drawPillButton(guiGraphics, x + 8 + (wRow2 + gap) * 2, r2Y, innerW - (wRow2 + gap) * 2, 20, "Оба края",
+                        sel.getGuardrail() == ModularRoadPreset.GuardrailPlacement.BOTH, mouseX, mouseY);
+
+                ModularRoadPreset.GuardrailStyle elemStyle = sel.resolveGuardrailStyle(active);
+                String styleLabel = "Стиль: " + elemStyle.getLabel();
+                if (this.font.width(styleLabel) > innerW - 12) {
+                    styleLabel = this.font.plainSubstrByWidth(styleLabel, innerW - 18) + "...";
+                }
+                drawSettingButton(guiGraphics, x + 8, r3Y, innerW, 20, styleLabel, mouseX, mouseY);
+            } else {
+                if (!sel.getType().supportsGreenery()) {
+                    guiGraphics.drawString(this.font, "§7Деревья: газон, тротуар", x + 10, r1Y + 8, 0xFF99AABB, false);
+                    guiGraphics.drawString(this.font, "§7Кусты: + обочина", x + 10, r1Y + 22, 0xFF99AABB, false);
+                } else {
+                    drawPillButton(guiGraphics, x + 8, r1Y, wRow1, 20, "Нет",
+                            sel.getGreenery() == ModularRoadPreset.GuardrailPlacement.NONE, mouseX, mouseY);
+                    drawPillButton(guiGraphics, x + 8 + wRow1 + gap, r1Y, innerW - wRow1 - gap, 20, "По центру",
+                            sel.getGreenery() == ModularRoadPreset.GuardrailPlacement.CENTER, mouseX, mouseY);
+
+                    drawPillButton(guiGraphics, x + 8, r2Y, wRow2, 20, "К дороге",
+                            sel.getGreenery() == ModularRoadPreset.GuardrailPlacement.INNER, mouseX, mouseY);
+                    drawPillButton(guiGraphics, x + 8 + wRow2 + gap, r2Y, wRow2, 20, "От дороги",
+                            sel.getGreenery() == ModularRoadPreset.GuardrailPlacement.OUTER, mouseX, mouseY);
+                    drawPillButton(guiGraphics, x + 8 + (wRow2 + gap) * 2, r2Y, innerW - (wRow2 + gap) * 2, 20, "Оба края",
+                            sel.getGreenery() == ModularRoadPreset.GuardrailPlacement.BOTH, mouseX, mouseY);
+
+                    String gLabel = "Растение: " + sel.getGreeneryStyle().getLabel();
+                    if (this.font.width(gLabel) > innerW - 12) {
+                        gLabel = this.font.plainSubstrByWidth(gLabel, innerW - 18) + "...";
+                    }
+                    drawSettingButton(guiGraphics, x + 8, r3Y, innerW, 20, gLabel, mouseX, mouseY);
+                }
+            }
+        } else {
+            int h2 = 38;
+            guiGraphics.fill(x, y2, x + panelW, y2 + h2, 0xEE1E2436);
+            guiGraphics.fill(x, y2, x + panelW, y2 + 2, 0xFF354466);
+            guiGraphics.drawString(this.font, "2-й слой (барьеры / зелень)", x + 10, y2 + 7, 0xFFFFFFFF, false);
+            guiGraphics.drawString(this.font, "§7Кликните элемент снизу", x + 10, y2 + 21, 0xFF99AABB, false);
+        }
+    }
+
+    private void drawPillButton(GuiGraphics guiGraphics, int x, int y, int w, int h, String text, boolean active, int mouseX, int mouseY) {
+        boolean hover = mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+        int border = active ? 0xFF55E0FF : (hover ? 0xFF66B3FF : 0xFF2A4A72);
+        int bg = active ? 0xFF1F4B7D : (hover ? 0xFF284872 : 0xFF14243B);
+        guiGraphics.fill(x, y, x + w, y + h, border);
+        guiGraphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, bg);
+        int tw = this.font.width(text);
+        guiGraphics.drawString(this.font, text, x + Math.max(2, (w - tw) / 2), y + 6, active ? 0xFFFFFFFF : 0xFFD8E4F0, false);
     }
 
     private void drawSettingButton(GuiGraphics guiGraphics, int x, int y, int w, int h, String text, int mouseX, int mouseY) {
@@ -410,8 +567,25 @@ public class RoadPresetStudioScreen extends Screen {
 
         int stackY = this.height - 72;
 
-        // Enable scissor clipping for scrollable horizontal stack
-        guiGraphics.enableScissor(10, stackY - 4, this.width - 10, stackY + itemH + 6);
+        // Enable scissor clipping for scrollable horizontal stack + 2nd-layer indicators
+        guiGraphics.enableScissor(10, stackY - 9, this.width - 10, stackY + itemH + 6);
+
+        int leftOuterSw = -1;
+        int rightOuterSw = -1;
+        if (active.isNoiseWallEnabled()) {
+            boolean laneSeen = false;
+            for (int i = 0; i < stack.size(); i++) {
+                RoadElementType t = stack.get(i).getType();
+                if (t == RoadElementType.SIDEWALK && !laneSeen) { leftOuterSw = i; break; }
+                if (t == RoadElementType.LANE) laneSeen = true;
+            }
+            laneSeen = false;
+            for (int i = stack.size() - 1; i >= 0; i--) {
+                RoadElementType t = stack.get(i).getType();
+                if (t == RoadElementType.SIDEWALK && !laneSeen) { rightOuterSw = i; break; }
+                if (t == RoadElementType.LANE) laneSeen = true;
+            }
+        }
 
         int curX = startX;
         for (int i = 0; i < stack.size(); i++) {
@@ -425,11 +599,105 @@ public class RoadPresetStudioScreen extends Screen {
 
             int drawY = isDragged ? stackY - 2 : stackY;
 
+            // Render 2nd-layer guardrail / noise-wall markers directly above element box
+            int barY0 = drawY - 6;
+            int barY1 = drawY - 2;
+            int markerW = Math.max(10, ew / 4);
+            ModularRoadPreset.GuardrailStyle elemStyle = elem.resolveGuardrailStyle(active);
+            if (elemStyle != ModularRoadPreset.GuardrailStyle.NONE
+                    && elem.getGuardrail() != ModularRoadPreset.GuardrailPlacement.NONE) {
+                boolean roadIsRight = true;
+                int bestDist = Integer.MAX_VALUE;
+                for (int j = 0; j < stack.size(); j++) {
+                    if (stack.get(j).getType() == RoadElementType.LANE && j != i) {
+                        int d = Math.abs(j - i);
+                        if (d < bestDist) {
+                            bestDist = d;
+                            roadIsRight = (j > i);
+                        }
+                    }
+                }
+                int col = switch (elemStyle) {
+                    case IRON -> 0xFF55E0FF;
+                    case ANVIL -> 0xFFAAB4C2;
+                    case BAMBOO -> 0xFF7BE04E;
+                    case DIORITE -> 0xFFF0EDE5;
+                    case GLASS -> 0xFFC29BFF;
+                    case NONE -> 0xFF55E0FF;
+                };
+                switch (elem.getGuardrail()) {
+                    case CENTER -> guiGraphics.fill(bx + (ew - markerW) / 2, barY0, bx + (ew + markerW) / 2, barY1, col);
+                    case INNER -> {
+                        int mx = roadIsRight ? (bx + ew - markerW - 2) : (bx + 2);
+                        guiGraphics.fill(mx, barY0, mx + markerW, barY1, col);
+                    }
+                    case OUTER -> {
+                        int mx = roadIsRight ? (bx + 2) : (bx + ew - markerW - 2);
+                        guiGraphics.fill(mx, barY0, mx + markerW, barY1, col);
+                    }
+                    case BOTH -> {
+                        guiGraphics.fill(bx + 2, barY0, bx + 2 + markerW, barY1, col);
+                        guiGraphics.fill(bx + ew - markerW - 2, barY0, bx + ew - 2, barY1, col);
+                    }
+                    case NONE -> {}
+                }
+            }
+            if (i == leftOuterSw) {
+                guiGraphics.fill(bx + 2, barY0 - 2, bx + 2 + markerW, barY1, 0xFFFFAA33);
+            }
+            if (i == rightOuterSw && rightOuterSw != leftOuterSw) {
+                guiGraphics.fill(bx + ew - markerW - 2, barY0 - 2, bx + ew - 2, barY1, 0xFFFFAA33);
+            }
+
             int border = isDragged ? 0xFFFFFF55 : (isSel ? 0xFFFFFFFF : (isHover ? 0xFF66B3FF : 0xFF2A75D3));
             int bg = isDragged ? 0xFF2B5282 : (isSel ? 0xFF1E4678 : (isHover ? 0xFF19365E : 0xEE162947));
 
             guiGraphics.fill(bx, drawY, bx + ew, drawY + itemH, border);
             guiGraphics.fill(bx + 1, drawY + 1, bx + ew - 1, drawY + itemH - 1, bg);
+
+            // Render 2nd-layer greenery slot markers inside the top lip of the element box
+            ModularRoadPreset.GreeneryStyle gStyle = elem.getGreeneryStyle();
+            if (gStyle.isActive() && elem.getGreenery() != ModularRoadPreset.GuardrailPlacement.NONE && gStyle.isAllowedFor(elem.getType())) {
+                boolean roadIsRightG = true;
+                int bestDistG = Integer.MAX_VALUE;
+                for (int j = 0; j < stack.size(); j++) {
+                    if (stack.get(j).getType() == RoadElementType.LANE && j != i) {
+                        int d = Math.abs(j - i);
+                        if (d < bestDistG) {
+                            bestDistG = d;
+                            roadIsRightG = (j > i);
+                        }
+                    }
+                }
+                int gCol = switch (gStyle) {
+                    case OAK -> 0xFF4CD964;
+                    case PALM -> 0xFFA8E04E;
+                    case SMALL -> 0xFF55E080;
+                    case POPLAR -> 0xFF2EB85C;
+                    case TREE_MIX -> 0xFF88F048;
+                    case BUSH_LIGHT -> 0xFFFFE066;
+                    case BUSH_WALL -> 0xFF70C948;
+                    case NONE -> 0xFF4CD964;
+                };
+                int gY0 = drawY + 2;
+                int gY1 = drawY + 5;
+                switch (elem.getGreenery()) {
+                    case CENTER -> guiGraphics.fill(bx + (ew - markerW) / 2, gY0, bx + (ew + markerW) / 2, gY1, gCol);
+                    case INNER -> {
+                        int mx = roadIsRightG ? (bx + ew - markerW - 2) : (bx + 2);
+                        guiGraphics.fill(mx, gY0, mx + markerW, gY1, gCol);
+                    }
+                    case OUTER -> {
+                        int mx = roadIsRightG ? (bx + 2) : (bx + ew - markerW - 2);
+                        guiGraphics.fill(mx, gY0, mx + markerW, gY1, gCol);
+                    }
+                    case BOTH -> {
+                        guiGraphics.fill(bx + 2, gY0, bx + 2 + markerW, gY1, gCol);
+                        guiGraphics.fill(bx + ew - markerW - 2, gY0, bx + ew - 2, gY1, gCol);
+                    }
+                    case NONE -> {}
+                }
+            }
 
             String label = getElementShortLabel(elem);
             int textW = this.font.width(label);
@@ -551,433 +819,6 @@ public class RoadPresetStudioScreen extends Screen {
         guiGraphics.disableScissor();
     }
 
-    private void render3DPreview(GuiGraphics guiGraphics, float partialTick) {
-        ModularRoadPreset preset = PresetManager.getInstance().getActivePreset();
-        List<RoadStackElement> stack = preset.getStack();
-        if (stack.isEmpty()) return;
-
-        RoadPackRegistry.RoadPack pack = RoadPackRegistry.getInstance().getActivePack();
-        int totalWidth = preset.getTotalWidth();
-        float halfW = totalWidth / 2.0f;
-        int previewLength = 28; // Extended render distance without edge clipping
-
-        RenderSystem.enableDepthTest();
-
-        PoseStack poseStack = guiGraphics.pose();
-        poseStack.pushPose();
-
-        poseStack.translate(this.width / 2.0f, this.height / 2.0f - 20, 150.0f);
-        poseStack.scale(zoom, -zoom, zoom);
-
-        Quaternionf rotation = new Quaternionf()
-                .rotateX((float) Math.toRadians(pitch))
-                .rotateY((float) Math.toRadians(yaw));
-        poseStack.mulPose(rotation);
-
-        poseStack.translate(-halfW, 0, -previewLength / 2.0f);
-
-        BlockRenderDispatcher blockRenderer = Minecraft.getInstance().getBlockRenderer();
-
-        // 1. Render Road Stack elements
-        if (viewRoad) {
-            int currentX = 0;
-            for (int i = 0; i < stack.size(); i++) {
-                RoadStackElement elem = stack.get(i);
-                int elemW = elem.getWidth();
-                boolean isLeftSide = (currentX < halfW);
-                drawStackComponent(poseStack, blockRenderer, pack, elem.getType(), currentX, elemW, previewLength, isLeftSide);
-                currentX += elemW;
-            }
-        }
-
-        // 2. Viaduct Pillars (without crossbeam!)
-        if (viewViaduct) {
-            drawSchematicViaduct(poseStack, blockRenderer, pack, totalWidth, previewLength);
-        }
-
-        // 3. Tunnel
-        if (viewTunnel) {
-            drawSchematicTunnel(poseStack, blockRenderer, pack, totalWidth, previewLength);
-        }
-
-        // 4. Embankment
-        if (viewEmbankment) {
-            drawSchematicEmbankment(poseStack, blockRenderer, pack, totalWidth, previewLength);
-        }
-
-        // 5. Slope
-        if (viewSlope) {
-            drawSchematicSlope(poseStack, blockRenderer, pack, totalWidth, previewLength);
-        }
-
-        poseStack.popPose();
-        RenderSystem.disableDepthTest();
-    }
-
-    private void drawStackComponent(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                                    RoadPackRegistry.RoadPack pack, RoadElementType type,
-                                    int startX, int width, int length, boolean isLeftSide) {
-
-        if (type == RoadElementType.SIDEWALK) {
-            drawSidewalk(poseStack, blockRenderer, startX, width, length);
-            return;
-        }
-
-        if (type == RoadElementType.CURB) {
-            drawCurb(poseStack, blockRenderer, startX, width, length, isLeftSide);
-            return;
-        }
-
-        if (type == RoadElementType.LANE) {
-            drawLane(poseStack, blockRenderer, startX, width, length);
-            return;
-        }
-
-        if (type == RoadElementType.SHOULDER) {
-            drawShoulder(poseStack, blockRenderer, startX, width, length, isLeftSide);
-            return;
-        }
-
-        String schematicKey = switch (type) {
-            case MARKING_DASHED_LONG -> "road_razmetka_prerivistaya_long";
-            case MARKING_DASHED_SHORT -> "road_razmetka_prerivistaya_short";
-            case MARKING_SOLID -> "road_razmetka_sploshnaya";
-            case MARKING_DOUBLE_SOLID -> "road_razmetka_sploshnaya_double";
-            case DIVIDER_GRASS -> "road_razdelitel_grass";
-            default -> null;
-        };
-
-        LitematicParser.Schematic schematic = schematicKey != null ? pack.getSchematic(schematicKey) : null;
-
-        if (schematic != null) {
-            int elemW = schematic.getSizeZ();
-            for (int z = 0; z < length; z++) {
-                int sx = z % schematic.getSizeX();
-                for (int dx = 0; dx < elemW; dx++) {
-                    for (int y = 0; y < schematic.getSizeY(); y++) {
-                        BlockState state = schematic.getBlock(sx, y, dx);
-                        if (!state.isAir()) {
-                            BlockState oriented = orientStairsForRoad(state);
-                            renderBlock(poseStack, blockRenderer, oriented, startX + dx, y, z);
-                            renderBlock(poseStack, blockRenderer, Blocks.STONE.defaultBlockState(), startX + dx, -1, z);
-                        }
-                    }
-                }
-            }
-        } else {
-            drawLane(poseStack, blockRenderer, startX, width, length);
-        }
-    }
-
-    private BlockState orientStairsForRoad(BlockState state) {
-        if (state.getBlock() instanceof StairBlock) {
-            Direction dir = state.getValue(StairBlock.FACING);
-            if (dir == Direction.NORTH) {
-                return state.setValue(StairBlock.FACING, Direction.WEST);
-            } else if (dir == Direction.SOUTH) {
-                return state.setValue(StairBlock.FACING, Direction.EAST);
-            }
-        }
-        return state;
-    }
-
-    /**
-     * Pure Sidewalk: paving blocks (Stone, Andesite, Polished Andesite, Stone Bricks)
-     * Full width without embedded curb.
-     */
-    private void drawSidewalk(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                              int startX, int width, int length) {
-        BlockState[] mix = new BlockState[]{
-                Blocks.STONE.defaultBlockState(),
-                Blocks.ANDESITE.defaultBlockState(),
-                Blocks.POLISHED_ANDESITE.defaultBlockState(),
-                Blocks.STONE_BRICKS.defaultBlockState()
-        };
-        BlockState foundation = Blocks.STONE.defaultBlockState();
-
-        for (int z = 0; z < length; z++) {
-            for (int dx = 0; dx < width; dx++) {
-                int x = startX + dx;
-                int pseudoRand = Math.abs((x * 31 + z * 17)) % mix.length;
-                renderBlock(poseStack, blockRenderer, mix[pseudoRand], x, 0, z);
-                renderBlock(poseStack, blockRenderer, foundation, x, -1, z);
-            }
-        }
-    }
-
-    /**
-     * Explicit Curb: 1 block wide stairs oriented towards the sidewalk.
-     */
-    private void drawCurb(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                          int startX, int width, int length, boolean isLeftSide) {
-        Direction curbFacing = isLeftSide ? Direction.WEST : Direction.EAST;
-        BlockState curb = Blocks.POLISHED_ANDESITE_STAIRS.defaultBlockState()
-                .setValue(StairBlock.FACING, curbFacing)
-                .setValue(StairBlock.HALF, Half.BOTTOM)
-                .setValue(StairBlock.SHAPE, StairsShape.STRAIGHT);
-        BlockState foundation = Blocks.STONE.defaultBlockState();
-
-        for (int z = 0; z < length; z++) {
-            for (int dx = 0; dx < width; dx++) {
-                renderBlock(poseStack, blockRenderer, curb, startX + dx, 0, z);
-                renderBlock(poseStack, blockRenderer, foundation, startX + dx, -1, z);
-            }
-        }
-    }
-
-    /**
-     * Shoulder: 1 block stone adjacent to road + 2 blocks grass/dirt.
-     */
-    private void drawShoulder(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                              int startX, int width, int length, boolean isLeftSide) {
-        BlockState stone = Blocks.STONE.defaultBlockState();
-        BlockState grass = Blocks.GRASS_BLOCK.defaultBlockState();
-        BlockState dirt = Blocks.DIRT.defaultBlockState();
-
-        for (int z = 0; z < length; z++) {
-            if (isLeftSide) {
-                renderBlock(poseStack, blockRenderer, grass, startX, 0, z);
-                renderBlock(poseStack, blockRenderer, dirt, startX, -1, z);
-                renderBlock(poseStack, blockRenderer, grass, startX + 1, 0, z);
-                renderBlock(poseStack, blockRenderer, dirt, startX + 1, -1, z);
-                renderBlock(poseStack, blockRenderer, stone, startX + 2, 0, z);
-                renderBlock(poseStack, blockRenderer, stone, startX + 2, -1, z);
-            } else {
-                renderBlock(poseStack, blockRenderer, stone, startX, 0, z);
-                renderBlock(poseStack, blockRenderer, stone, startX, -1, z);
-                renderBlock(poseStack, blockRenderer, grass, startX + 1, 0, z);
-                renderBlock(poseStack, blockRenderer, dirt, startX + 1, -1, z);
-                renderBlock(poseStack, blockRenderer, grass, startX + 2, 0, z);
-                renderBlock(poseStack, blockRenderer, dirt, startX + 2, -1, z);
-            }
-        }
-    }
-
-    private void drawLane(PoseStack poseStack, BlockRenderDispatcher blockRenderer, int startX, int width, int length) {
-        BlockState asphalt = Blocks.GRAY_CONCRETE_POWDER.defaultBlockState();
-        BlockState stone = Blocks.STONE.defaultBlockState();
-        for (int z = 0; z < length; z++) {
-            for (int dx = 0; dx < width; dx++) {
-                renderBlock(poseStack, blockRenderer, asphalt, startX + dx, 0, z);
-                renderBlock(poseStack, blockRenderer, stone, startX + dx, -1, z);
-            }
-        }
-    }
-
-    /**
-     * Viaduct:
-     * - Continuous V-shaped vault along the entire road length.
-     * - Single, double, or triple monolithic pillar columns emerging under the deck.
-     */
-    private void drawSchematicViaduct(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                                      RoadPackRegistry.RoadPack pack, int totalWidth, int length) {
-        LitematicParser.Schematic pillar = pack.getSchematic("road_opora");
-        if (pillar == null) return;
-
-        int pillarCrossW = 7;
-        int pillarH = pillar.getSizeY();
-        int pillarLen = 4;
-
-        int pz = Math.max(0, (length - pillarLen) / 2);
-        int attachY = -2 - (pillarH - 1);
-
-        int[] pillarPositions = getPillarPositions(totalWidth);
-
-        BlockState leftStair = pillar.getBlock(9, 6, 0);
-        BlockState rightStair = pillar.getBlock(9, 6, 6);
-        BlockState stone = pillar.getBlock(9, 5, 1);
-
-        for (int px : pillarPositions) {
-            // 1. Continuous V-shaped vault along the entire road length
-            for (int lz = 0; lz < length; lz++) {
-                renderBlock(poseStack, blockRenderer, orientStairsForRoad(leftStair), px, attachY + 6, lz);
-                for (int dx = 1; dx <= 5; dx++) {
-                    renderBlock(poseStack, blockRenderer, stone, px + dx, attachY + 6, lz);
-                }
-                renderBlock(poseStack, blockRenderer, orientStairsForRoad(rightStair), px + 6, attachY + 6, lz);
-
-                for (int dx = 1; dx <= 5; dx++) {
-                    renderBlock(poseStack, blockRenderer, stone, px + dx, attachY + 5, lz);
-                }
-            }
-
-            // 2. Vertical pillar column (Y = 0..4) emerging from the vault at pz
-            for (int z = 0; z < pillarCrossW; z++) {
-                for (int y = 0; y <= 4; y++) {
-                    for (int x = 9; x <= 12; x++) {
-                        BlockState s = pillar.getBlock(x, y, z);
-                        if (!s.isAir()) {
-                            BlockState oriented = orientStairsForRoad(s);
-                            renderBlock(poseStack, blockRenderer, oriented, px + z, attachY + y, pz + (x - 9));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private int[] getPillarPositions(int totalWidth) {
-        if (totalWidth < 18) {
-            return new int[]{(totalWidth - 7) / 2};
-        } else if (totalWidth < 28) {
-            int px1 = Math.max(0, Math.min((int) Math.round(totalWidth * 0.25 - 3.5), totalWidth / 2 - 7));
-            int px2 = Math.max(totalWidth / 2, Math.min((int) Math.round(totalWidth * 0.75 - 3.5), totalWidth - 7));
-            return new int[]{px1, px2};
-        } else {
-            int px1 = Math.max(0, (int) Math.round(totalWidth * (1.0 / 6.0) - 3.5));
-            int px2 = (totalWidth - 7) / 2;
-            int px3 = Math.min(totalWidth - 7, (int) Math.round(totalWidth * (5.0 / 6.0) - 3.5));
-            return new int[]{px1, px2, px3};
-        }
-    }
-
-    /**
-     * Tunnel: side walls start flush with road edges at road level (y = 0), ceiling spans between arch peaks.
-     */
-    private void drawSchematicTunnel(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                                     RoadPackRegistry.RoadPack pack, int totalWidth, int length) {
-        LitematicParser.Schematic tunnelSide = pack.getSchematic("road_tunel_side");
-        if (tunnelSide == null) return;
-
-        int sideW = tunnelSide.getSizeZ();
-        int sideH = tunnelSide.getSizeY();
-
-        for (int z = 0; z < length; z++) {
-            int sx = z % tunnelSide.getSizeX();
-
-            // Left wall
-            for (int dz = 0; dz < sideW; dz++) {
-                for (int y = 0; y < sideH; y++) {
-                    BlockState s = tunnelSide.getBlock(sx, y, dz);
-                    if (!s.isAir()) {
-                        renderBlock(poseStack, blockRenderer, s, -1 + dz, y, z);
-                    }
-                }
-            }
-
-            // Right wall
-            for (int dz = 0; dz < sideW; dz++) {
-                for (int y = 0; y < sideH; y++) {
-                    BlockState s = tunnelSide.getBlock(sx, y, dz);
-                    if (!s.isAir()) {
-                        renderBlock(poseStack, blockRenderer, s, totalWidth - dz, y, z);
-                    }
-                }
-            }
-
-            // Ceiling: spans between arch peaks at y = sideH - 1
-            int leftPeakX = -1 + 5;
-            int rightPeakX = totalWidth - 5;
-            for (int x = leftPeakX; x <= rightPeakX; x++) {
-                renderBlock(poseStack, blockRenderer, Blocks.STONE.defaultBlockState(), x, sideH - 1, z);
-            }
-        }
-    }
-
-    /**
-     * Embankment: attached flush at y = 0, descending downwards and outwards away from road.
-     */
-    private void drawSchematicEmbankment(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                                         RoadPackRegistry.RoadPack pack, int totalWidth, int length) {
-        LitematicParser.Schematic nasip = pack.getSchematic("road_nasip");
-        if (nasip == null) return;
-
-        int nasipW = nasip.getSizeZ();
-        int nasipH = nasip.getSizeY();
-
-        for (int z = 0; z < length; z++) {
-            int sx = z % nasip.getSizeX();
-
-            // Under the road edge foundation (dz=0)
-            for (int y = 0; y < nasipH; y++) {
-                BlockState s0 = nasip.getBlock(sx, y, 0);
-                if (!s0.isAir()) {
-                    renderBlock(poseStack, blockRenderer, s0, 0, y - (nasipH - 1), z);
-                    renderBlock(poseStack, blockRenderer, s0, totalWidth - 1, y - (nasipH - 1), z);
-                }
-            }
-
-            // Right side: dz goes 1 .. nasipW - 1 (outward from road edge)
-            for (int dz = 1; dz < nasipW; dz++) {
-                int px = totalWidth + (dz - 1);
-                for (int y = 0; y < nasipH; y++) {
-                    BlockState state = nasip.getBlock(sx, y, dz);
-                    if (!state.isAir()) {
-                        renderBlock(poseStack, blockRenderer, state, px, y - (nasipH - 1), z);
-                    }
-                }
-            }
-            // Left side: dz goes 1 .. nasipW - 1 (outward from road edge)
-            for (int dz = 1; dz < nasipW; dz++) {
-                int px = -dz;
-                for (int y = 0; y < nasipH; y++) {
-                    BlockState state = nasip.getBlock(sx, y, dz);
-                    if (!state.isAir()) {
-                        renderBlock(poseStack, blockRenderer, state, px, y - (nasipH - 1), z);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Slope: attached flush at road level, ascending upwards and outwards away from road.
-     */
-    private void drawSchematicSlope(PoseStack poseStack, BlockRenderDispatcher blockRenderer,
-                                    RoadPackRegistry.RoadPack pack, int totalWidth, int length) {
-        LitematicParser.Schematic otkos = pack.getSchematic("road_otkos");
-        if (otkos == null) return;
-
-        int otkosW = otkos.getSizeZ();
-        int otkosH = otkos.getSizeY();
-
-        for (int z = 0; z < length; z++) {
-            int sx = z % otkos.getSizeX();
-
-            // Right side
-            for (int dz = 0; dz < otkosW; dz++) {
-                int schemZ = (otkosW - 1) - dz;
-                for (int y = 0; y < otkosH; y++) {
-                    BlockState state = otkos.getBlock(sx, y, schemZ);
-                    if (!state.isAir()) {
-                        renderBlock(poseStack, blockRenderer, state, totalWidth + dz, y + 1, z);
-                    }
-                }
-                renderBlock(poseStack, blockRenderer, Blocks.STONE.defaultBlockState(), totalWidth + dz, 0, z);
-                renderBlock(poseStack, blockRenderer, Blocks.STONE.defaultBlockState(), totalWidth + dz, -1, z);
-            }
-
-            // Left side
-            for (int dz = 0; dz < otkosW; dz++) {
-                int schemZ = (otkosW - 1) - dz;
-                for (int y = 0; y < otkosH; y++) {
-                    BlockState state = otkos.getBlock(sx, y, schemZ);
-                    if (!state.isAir()) {
-                        renderBlock(poseStack, blockRenderer, state, -1 - dz, y + 1, z);
-                    }
-                }
-                renderBlock(poseStack, blockRenderer, Blocks.STONE.defaultBlockState(), -1 - dz, 0, z);
-                renderBlock(poseStack, blockRenderer, Blocks.STONE.defaultBlockState(), -1 - dz, -1, z);
-            }
-        }
-    }
-
-    private void renderBlock(PoseStack poseStack, BlockRenderDispatcher blockRenderer, BlockState state, int x, int y, int z) {
-        poseStack.pushPose();
-        poseStack.translate(x, y, z);
-
-        blockRenderer.renderSingleBlock(
-                state,
-                poseStack,
-                Minecraft.getInstance().renderBuffers().bufferSource(),
-                0xF000F0,
-                OverlayTexture.NO_OVERLAY
-        );
-        Minecraft.getInstance().renderBuffers().bufferSource().endBatch();
-
-        poseStack.popPose();
-    }
-
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         // 1. Add Dropdown handling
@@ -999,7 +840,7 @@ public class RoadPresetStudioScreen extends Screen {
                     ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
                     active.getStack().add(new RoadStackElement(types[clickedIdx]));
                     selectedElementIdx = active.getStack().size() - 1;
-                    PresetManager.getInstance().saveToFile();
+                    saveAndRefreshStudio();
                     isAddMenuOpen = false;
                     return true;
                 }
@@ -1037,150 +878,239 @@ public class RoadPresetStudioScreen extends Screen {
             int contentY = tabY + tabH + 8;
 
             if (leftTab == 0) {
-                // Interactive Road Settings
+                int contentH = panelH - (contentY - ly) - 8;
+                if (mouseY < contentY || mouseY > contentY + contentH) {
+                    return true;
+                }
+
+                // Interactive Road Settings with collapsible sections
                 ModularRoadPreset active = PresetManager.getInstance().getActivePreset();
                 int curY = contentY - (int) leftPanelScroll;
                 int btnW = panelW - 16;
                 int btnH = 20;
 
                 // 1. ПЕРЕКРЁСТКИ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.cycleJunctionStyle();
-                    saveAndRefreshStudio();
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[0] = !SECTION_COLLAPSED[0];
                     return true;
                 }
-                curY += 24;
-
-                // 2. ФОНАРИ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.cycleLampStyle();
-                    saveAndRefreshStudio();
-                    return true;
-                }
-                curY += 24;
-                if (active.getLampStyle() != ModularRoadPreset.LampStyle.OFF) {
+                curY += 18;
+                if (!SECTION_COLLAPSED[0]) {
                     if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                        active.cycleLampSpacing();
+                        active.cycleJunctionStyle();
                         saveAndRefreshStudio();
                         return true;
                     }
                     curY += 24;
+                }
+
+                // 2. ФОНАРИ
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[1] = !SECTION_COLLAPSED[1];
+                    return true;
+                }
+                curY += 18;
+                if (!SECTION_COLLAPSED[1]) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleLampStyle();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (active.getLampStyle() != ModularRoadPreset.LampStyle.OFF) {
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleLampSpacing();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.toggleSidewalkDoubleLamps();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleLampPlacement();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                    }
                 }
 
                 // 3. ОГРАЖДЕНИЯ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.cycleGuardrailStyle();
-                    saveAndRefreshStudio();
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[2] = !SECTION_COLLAPSED[2];
                     return true;
                 }
-                curY += 24;
+                curY += 18;
+                if (!SECTION_COLLAPSED[2]) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleAllElementGuardrailStyles();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.toggleNoiseWall();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                }
 
-                // 4. ДОПЫ ДЛЯ ТРОТУАРА
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.toggleTrees();
-                    saveAndRefreshStudio();
+                // 4. ОЗЕЛЕНЕНИЕ
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[3] = !SECTION_COLLAPSED[3];
                     return true;
                 }
-                curY += 24;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.toggleBushes();
-                    saveAndRefreshStudio();
-                    return true;
+                curY += 18;
+                if (!SECTION_COLLAPSED[3]) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleAllElementGreeneryStyles();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleTreeSpacing();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleBushSpacing();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
                 }
-                curY += 24;
 
                 // 5. НАСЫПЬ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.setEmbankmentMode(cycleToggle(active.getEmbankmentMode()));
-                    saveAndRefreshStudio();
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[4] = !SECTION_COLLAPSED[4];
                     return true;
                 }
-                curY += 24;
-                if (active.getEmbankmentMode() != ModularRoadPreset.ToggleMode.OFF) {
+                curY += 18;
+                if (!SECTION_COLLAPSED[4]) {
                     if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                        active.cycleEmbankmentShape();
+                        active.setEmbankmentMode(cycleToggle(active.getEmbankmentMode()));
                         saveAndRefreshStudio();
                         return true;
                     }
                     curY += 24;
-                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                        active.cycleEmbankmentMaterial();
-                        saveAndRefreshStudio();
-                        return true;
+                    if (active.getEmbankmentMode() != ModularRoadPreset.ToggleMode.OFF) {
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleEmbankmentShape();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleEmbankmentMaterial();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
                     }
-                    curY += 24;
                 }
 
                 // 6. ОТКОСЫ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.setSlopeMode(cycleToggle(active.getSlopeMode()));
-                    saveAndRefreshStudio();
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[5] = !SECTION_COLLAPSED[5];
                     return true;
                 }
-                curY += 24;
-                if (active.getSlopeMode() != ModularRoadPreset.ToggleMode.OFF) {
+                curY += 18;
+                if (!SECTION_COLLAPSED[5]) {
                     if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                        active.cycleSlopeStyle();
+                        active.setSlopeMode(cycleToggle(active.getSlopeMode()));
                         saveAndRefreshStudio();
                         return true;
                     }
                     curY += 24;
+                    if (active.getSlopeMode() != ModularRoadPreset.ToggleMode.OFF) {
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleSlopeStyle();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleSlopeMaterial();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                    }
                 }
 
                 // 7. ТУННЕЛИ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.setTunnelMode(cycleMode(active.getTunnelMode()));
-                    saveAndRefreshStudio();
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[6] = !SECTION_COLLAPSED[6];
                     return true;
                 }
-                curY += 24;
-                if (active.getTunnelMode() != ModularRoadPreset.Mode.OFF) {
+                curY += 18;
+                if (!SECTION_COLLAPSED[6]) {
                     if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                        active.cycleTunnelShape();
+                        active.setTunnelMode(cycleMode(active.getTunnelMode()));
                         saveAndRefreshStudio();
                         return true;
                     }
                     curY += 24;
+                    if (active.getTunnelMode() != ModularRoadPreset.Mode.OFF) {
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cycleTunnelShape();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                    }
                 }
 
                 // 8. ЭСТАКАДЫ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.setViaductMode(cycleMode(active.getViaductMode()));
-                    saveAndRefreshStudio();
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[7] = !SECTION_COLLAPSED[7];
                     return true;
                 }
-                curY += 24;
-                if (active.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                curY += 18;
+                if (!SECTION_COLLAPSED[7]) {
                     if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                        active.cyclePillarStyle();
+                        active.setViaductMode(cycleMode(active.getViaductMode()));
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (active.getViaductMode() != ModularRoadPreset.Mode.OFF) {
+                        if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                            active.cyclePillarStyle();
+                            saveAndRefreshStudio();
+                            return true;
+                        }
+                        curY += 24;
+                    }
+                }
+
+                // 9. БОРДЮРЫ И ТРОТУАРЫ
+                if (isHeaderClicked(mouseX, mouseY, lx + 8, curY, btnW)) {
+                    SECTION_COLLAPSED[8] = !SECTION_COLLAPSED[8];
+                    return true;
+                }
+                curY += 18;
+                if (!SECTION_COLLAPSED[8]) {
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleCurbPalette();
+                        saveAndRefreshStudio();
+                        return true;
+                    }
+                    curY += 24;
+                    if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
+                        active.cycleSidewalkPalette();
                         saveAndRefreshStudio();
                         return true;
                     }
                     curY += 24;
                 }
-
-                // 9. БОРДЮРЫ И ТРОТУАРЫ
-                curY += 16;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.cycleCurbPalette();
-                    saveAndRefreshStudio();
-                    return true;
-                }
-                curY += 24;
-                if (mouseX >= lx + 8 && mouseX <= lx + 8 + btnW && mouseY >= curY && mouseY <= curY + btnH) {
-                    active.cycleSidewalkPalette();
-                    saveAndRefreshStudio();
-                    return true;
-                }
-                curY += 24;
             } else {
                 // Click on preset
                 int curY = contentY - (int) leftPanelScroll;
@@ -1188,6 +1118,7 @@ public class RoadPresetStudioScreen extends Screen {
                     if (mouseX >= lx + 8 && mouseX <= lx + panelW - 8 && mouseY >= curY && mouseY <= curY + 20) {
                         PresetManager.getInstance().setActivePresetId(preset.getId());
                         ClientGraphCache.getInstance().markPreviewDirty();
+                        studioPreview.markDirty();
                         selectedElementIdx = -1;
                         if (nameEditBox != null) nameEditBox.setValue(preset.getName());
                         return true;
@@ -1205,6 +1136,7 @@ public class RoadPresetStudioScreen extends Screen {
                 int b1X = lx + 8;
                 if (mouseX >= b1X && mouseX <= b1X + bW && mouseY >= btnY && mouseY <= btnY + btnH2) {
                     ModularRoadPreset np = PresetManager.getInstance().createNewPreset();
+                    studioPreview.markDirty();
                     selectedElementIdx = -1;
                     if (nameEditBox != null) nameEditBox.setValue(np.getName());
                     return true;
@@ -1215,6 +1147,7 @@ public class RoadPresetStudioScreen extends Screen {
                 if (mouseX >= b2X && mouseX <= b2X + bW && mouseY >= btnY && mouseY <= btnY + btnH2) {
                     ModularRoadPreset activeP = PresetManager.getInstance().getActivePreset();
                     ModularRoadPreset dup = PresetManager.getInstance().duplicatePreset(activeP.getId());
+                    studioPreview.markDirty();
                     selectedElementIdx = -1;
                     if (nameEditBox != null && dup != null) nameEditBox.setValue(dup.getName());
                     return true;
@@ -1225,6 +1158,7 @@ public class RoadPresetStudioScreen extends Screen {
                 if (mouseX >= b3X && mouseX <= b3X + bW && mouseY >= btnY && mouseY <= btnY + btnH2) {
                     ModularRoadPreset activeP = PresetManager.getInstance().getActivePreset();
                     PresetManager.getInstance().deletePreset(activeP.getId());
+                    studioPreview.markDirty();
                     selectedElementIdx = -1;
                     if (nameEditBox != null) nameEditBox.setValue(PresetManager.getInstance().getActivePreset().getName());
                     return true;
@@ -1247,11 +1181,103 @@ public class RoadPresetStudioScreen extends Screen {
 
         if (mouseX >= rx + 8 && mouseX <= rx + rPanelW - 8) {
             // View toggles card
-            if (mouseY >= vy && mouseY <= vy + 20) { viewRoad = !viewRoad; return true; }
-            if (mouseY >= vy + 24 && mouseY <= vy + 44) { viewViaduct = !viewViaduct; return true; }
-            if (mouseY >= vy + 48 && mouseY <= vy + 68) { viewTunnel = !viewTunnel; return true; }
-            if (mouseY >= vy + 72 && mouseY <= vy + 92) { viewEmbankment = !viewEmbankment; return true; }
-            if (mouseY >= vy + 96 && mouseY <= vy + 116) { viewSlope = !viewSlope; return true; }
+            if (mouseY >= vy && mouseY <= vy + 20) { viewRoad = !viewRoad; studioPreview.markDirty(); return true; }
+            if (mouseY >= vy + 24 && mouseY <= vy + 44) { viewViaduct = !viewViaduct; studioPreview.markDirty(); return true; }
+            if (mouseY >= vy + 48 && mouseY <= vy + 68) { viewTunnel = !viewTunnel; studioPreview.markDirty(); return true; }
+            if (mouseY >= vy + 72 && mouseY <= vy + 92) { viewEmbankment = !viewEmbankment; studioPreview.markDirty(); return true; }
+            if (mouseY >= vy + 96 && mouseY <= vy + 116) { viewSlope = !viewSlope; studioPreview.markDirty(); return true; }
+        }
+        if (mouseX >= rx && mouseX <= rx + rPanelW && ((mouseY >= y0 && mouseY <= y0 + 46) || (mouseY >= y1 && mouseY <= y1 + 150))) {
+            return true;
+        }
+
+        // Card 2: Selected element 2nd-layer (guardrails / greenery) placement and per-element style clicks
+        ModularRoadPreset activeForCard = PresetManager.getInstance().getActivePreset();
+        List<RoadStackElement> cardStack = activeForCard.getStack();
+        int y2 = y1 + 150 + 8;
+        if (selectedElementIdx >= 0 && selectedElementIdx < cardStack.size()) {
+            RoadStackElement sel = cardStack.get(selectedElementIdx);
+            int tab1X = rx + rPanelW - 102;
+            int tab2X = rx + rPanelW - 52;
+            int tabY = y2 + 5;
+            if (mouseY >= tabY && mouseY <= tabY + 14) {
+                if (mouseX >= tab1X && mouseX <= tab1X + 48) {
+                    rightLayerTab = 0;
+                    return true;
+                }
+                if (mouseX >= tab2X && mouseX <= tab2X + 44) {
+                    rightLayerTab = 1;
+                    return true;
+                }
+            }
+
+            int innerW = rPanelW - 16;
+            int gap2 = 4;
+            int wRow1 = (innerW - gap2) / 2;
+            int r1Y = y2 + 24;
+            int wRow2 = (innerW - gap2 * 2) / 3;
+            int r2Y = r1Y + 24;
+            int r3Y = r2Y + 24;
+
+            if (rightLayerTab == 0 || sel.getType().supportsGreenery()) {
+                ModularRoadPreset.GuardrailPlacement chosen = null;
+                if (mouseY >= r1Y && mouseY <= r1Y + 20) {
+                    if (mouseX >= rx + 8 && mouseX <= rx + 8 + wRow1) chosen = ModularRoadPreset.GuardrailPlacement.NONE;
+                    else if (mouseX >= rx + 8 + wRow1 + gap2 && mouseX <= rx + rPanelW - 8) chosen = ModularRoadPreset.GuardrailPlacement.CENTER;
+                } else if (mouseY >= r2Y && mouseY <= r2Y + 20) {
+                    if (mouseX >= rx + 8 && mouseX <= rx + 8 + wRow2) chosen = ModularRoadPreset.GuardrailPlacement.INNER;
+                    else if (mouseX >= rx + 8 + wRow2 + gap2 && mouseX <= rx + 8 + wRow2 * 2 + gap2) chosen = ModularRoadPreset.GuardrailPlacement.OUTER;
+                    else if (mouseX >= rx + 8 + (wRow2 + gap2) * 2 && mouseX <= rx + rPanelW - 8) chosen = ModularRoadPreset.GuardrailPlacement.BOTH;
+                } else if (mouseY >= r3Y && mouseY <= r3Y + 20 && mouseX >= rx + 8 && mouseX <= rx + rPanelW - 8) {
+                    if (rightLayerTab == 0) {
+                        ModularRoadPreset.GuardrailStyle nextStyle = sel.cycleGuardrailStyle(activeForCard);
+                        if (nextStyle == ModularRoadPreset.GuardrailStyle.NONE) {
+                            sel.setGuardrail(ModularRoadPreset.GuardrailPlacement.NONE);
+                        } else if (sel.getGuardrail() == ModularRoadPreset.GuardrailPlacement.NONE) {
+                            sel.setGuardrail(ModularRoadPreset.defaultGuardrailPlacementFor(sel.getType()));
+                        }
+                    } else {
+                        ModularRoadPreset.GreeneryStyle nextStyle = sel.cycleGreeneryStyle();
+                        if (nextStyle == ModularRoadPreset.GreeneryStyle.NONE) {
+                            sel.setGreenery(ModularRoadPreset.GuardrailPlacement.NONE);
+                        } else if (sel.getGreenery() == ModularRoadPreset.GuardrailPlacement.NONE) {
+                            sel.setGreenery(ModularRoadPreset.defaultGreeneryPlacementFor(sel.getType()));
+                        }
+                    }
+                    saveAndRefreshStudio();
+                    return true;
+                }
+                if (chosen != null) {
+                    if (rightLayerTab == 0) {
+                        sel.setGuardrail(chosen);
+                        if (chosen != ModularRoadPreset.GuardrailPlacement.NONE) {
+                            ModularRoadPreset.GuardrailStyle resolved = sel.resolveGuardrailStyle(activeForCard);
+                            if (resolved == ModularRoadPreset.GuardrailStyle.NONE) {
+                                sel.setGuardrailStyle(ModularRoadPreset.GuardrailStyle.IRON);
+                            } else if (sel.getRawGuardrailStyle() == null) {
+                                sel.setGuardrailStyle(resolved);
+                            }
+                        }
+                    } else {
+                        sel.setGreenery(chosen);
+                        if (chosen != ModularRoadPreset.GuardrailPlacement.NONE
+                                && (sel.getGreeneryStyle() == ModularRoadPreset.GreeneryStyle.NONE
+                                        || !sel.getGreeneryStyle().isAllowedFor(sel.getType()))) {
+                            sel.setGreeneryStyle(sel.getType().supportsTrees()
+                                    ? ModularRoadPreset.GreeneryStyle.OAK
+                                    : ModularRoadPreset.GreeneryStyle.BUSH_LIGHT);
+                        }
+                    }
+                    saveAndRefreshStudio();
+                    return true;
+                }
+            }
+            int h2 = 100;
+            if (mouseX >= rx && mouseX <= rx + rPanelW && mouseY >= y2 && mouseY <= y2 + h2) {
+                return true;
+            }
+        } else if (mouseX >= rx && mouseX <= rx + rPanelW && mouseY >= y2 && mouseY <= y2 + 38) {
+            return true;
         }
 
         // 4. Bottom Actions row: [+ Добавить] [- Удалить] [ ◄ ] [ ► ] [ W- ] [ W+ ]
@@ -1288,7 +1314,7 @@ public class RoadPresetStudioScreen extends Screen {
                 if (selectedElementIdx >= stack.size()) {
                     selectedElementIdx = stack.size() - 1;
                 }
-                PresetManager.getInstance().saveToFile();
+                saveAndRefreshStudio();
                 return true;
             }
         }
@@ -1300,7 +1326,7 @@ public class RoadPresetStudioScreen extends Screen {
                 RoadStackElement item = stack.remove(selectedElementIdx);
                 stack.add(selectedElementIdx - 1, item);
                 selectedElementIdx--;
-                PresetManager.getInstance().saveToFile();
+                saveAndRefreshStudio();
                 return true;
             }
         }
@@ -1312,7 +1338,7 @@ public class RoadPresetStudioScreen extends Screen {
                 RoadStackElement item = stack.remove(selectedElementIdx);
                 stack.add(selectedElementIdx + 1, item);
                 selectedElementIdx++;
-                PresetManager.getInstance().saveToFile();
+                saveAndRefreshStudio();
                 return true;
             }
         }
@@ -1324,7 +1350,7 @@ public class RoadPresetStudioScreen extends Screen {
                 RoadStackElement el = stack.get(selectedElementIdx);
                 if (el.getWidth() > 1) {
                     el.setWidth(el.getWidth() - 1);
-                    PresetManager.getInstance().saveToFile();
+                    saveAndRefreshStudio();
                     return true;
                 }
             }
@@ -1337,7 +1363,7 @@ public class RoadPresetStudioScreen extends Screen {
                 RoadStackElement el = stack.get(selectedElementIdx);
                 if (el.getWidth() < 16) {
                     el.setWidth(el.getWidth() + 1);
-                    PresetManager.getInstance().saveToFile();
+                    saveAndRefreshStudio();
                     return true;
                 }
             }
@@ -1374,11 +1400,26 @@ public class RoadPresetStudioScreen extends Screen {
             curStackX += ew + spacing;
         }
 
-        // 6. Viewport 3D drag
+        // 6. Viewport 3D orbit (LMB), pan (RMB / MMB), and double-click fit
+        if (this.nameEditBox != null) {
+            this.nameEditBox.setFocused(false);
+        }
         if (button == 0) {
-            isDragging3D = true;
-            lastMouseX = mouseX;
-            lastMouseY = mouseY;
+            long now = System.currentTimeMillis();
+            double dist = Math.hypot(mouseX - lastViewportClickX, mouseY - lastViewportClickY);
+            if (now - lastViewportClickMs <= 280L && dist <= 5.0) {
+                studioPreview.fit();
+                lastViewportClickMs = 0L;
+            } else {
+                lastViewportClickMs = now;
+                lastViewportClickX = mouseX;
+                lastViewportClickY = mouseY;
+            }
+            isDraggingOrbit = true;
+            return true;
+        }
+        if (button == 1 || button == 2) {
+            isDraggingPan = true;
             return true;
         }
 
@@ -1400,9 +1441,12 @@ public class RoadPresetStudioScreen extends Screen {
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         if (button == 0) {
-            isDragging3D = false;
+            isDraggingOrbit = false;
             isDraggingElement = false;
             draggedElementIdx = -1;
+        }
+        if (button == 1 || button == 2) {
+            isDraggingPan = false;
         }
         return super.mouseReleased(mouseX, mouseY, button);
     }
@@ -1441,7 +1485,7 @@ public class RoadPresetStudioScreen extends Screen {
                     stack.add(draggedElementIdx - 1, item);
                     draggedElementIdx--;
                     selectedElementIdx = draggedElementIdx;
-                    PresetManager.getInstance().saveToFile();
+                    saveAndRefreshStudio();
                     return true;
                 }
                 // Check swap with right neighbor
@@ -1450,25 +1494,33 @@ public class RoadPresetStudioScreen extends Screen {
                     stack.add(draggedElementIdx + 1, item);
                     draggedElementIdx++;
                     selectedElementIdx = draggedElementIdx;
-                    PresetManager.getInstance().saveToFile();
+                    saveAndRefreshStudio();
                     return true;
                 }
             }
             return true;
         }
 
-        // 3D rotation
-        if (isDragging3D) {
-            yaw += (float) dragX * 0.8f;
-            pitch = Math.max(-80.0f, Math.min(80.0f, pitch + (float) dragY * 0.8f));
+        // 3D pan & orbit
+        if (isDraggingPan) {
+            studioPreview.pan((float) dragX, (float) dragY);
+            return true;
+        }
+        if (isDraggingOrbit) {
+            studioPreview.rotate((float) dragX, (float) dragY);
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
+    private boolean isHeaderClicked(double mouseX, double mouseY, int x, int y, int w) {
+        return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + 16;
+    }
+
     private void saveAndRefreshStudio() {
         PresetManager.getInstance().saveToFile();
         ClientGraphCache.getInstance().markPreviewDirty();
+        studioPreview.markDirty();
     }
 
     @Override
@@ -1486,21 +1538,29 @@ public class RoadPresetStudioScreen extends Screen {
         int panelW = 200;
         int panelH = this.height - 100;
         if (mouseX >= 16 && mouseX <= 16 + panelW && mouseY >= 20 && mouseY <= 20 + panelH) {
+            int contentH = Math.max(1, panelH - 36 - ((leftTab == 1) ? 36 : 8));
             float maxScroll = (leftTab == 0)
-                    ? Math.max(0, 560.0f - (panelH - 70))
-                    : Math.max(0, PresetManager.getInstance().getAllPresets().size() * 24 - (panelH - 70));
+                    ? Math.max(0, leftSettingsContentHeight - contentH)
+                    : Math.max(0, PresetManager.getInstance().getAllPresets().size() * 24 - contentH);
             leftPanelScroll = Math.max(0, Math.min(maxScroll, leftPanelScroll - (float) scrollY * 20));
             return true;
         }
 
-        // 3. Bottom stack horizontal scrolling
+        // 3. Right panel area (ignore scroll inside cards)
+        int rPanelW = 195;
+        int rx = this.width - rPanelW - 16;
+        if (mouseX >= rx && mouseX <= rx + rPanelW && mouseY >= 20 && mouseY <= 224) {
+            return true;
+        }
+
+        // 4. Bottom stack horizontal scrolling
         if (mouseY >= this.height - 76) {
             stackScrollX = Math.max(0, Math.min(maxStackScroll, stackScrollX - (float) scrollY * 28));
             return true;
         }
 
-        // 4. Default: Zoom 3D preview
-        zoom = Math.max(8.0f, Math.min(60.0f, zoom + (float) scrollY * 2.5f));
+        // 5. Default: Cursor-centered exponential zoom in 3D preview
+        studioPreview.zoomAt(scrollY, (float) mouseX, (float) mouseY);
         return true;
     }
 
@@ -1521,13 +1581,13 @@ public class RoadPresetStudioScreen extends Screen {
                 RoadStackElement item = stack.remove(selectedElementIdx);
                 stack.add(selectedElementIdx - 1, item);
                 selectedElementIdx--;
-                PresetManager.getInstance().saveToFile();
+                saveAndRefreshStudio();
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_RIGHT && selectedElementIdx < stack.size() - 1) {
                 RoadStackElement item = stack.remove(selectedElementIdx);
                 stack.add(selectedElementIdx + 1, item);
                 selectedElementIdx++;
-                PresetManager.getInstance().saveToFile();
+                saveAndRefreshStudio();
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
                 if (stack.size() > 1) {
@@ -1535,7 +1595,7 @@ public class RoadPresetStudioScreen extends Screen {
                     if (selectedElementIdx >= stack.size()) {
                         selectedElementIdx = stack.size() - 1;
                     }
-                    PresetManager.getInstance().saveToFile();
+                    saveAndRefreshStudio();
                     return true;
                 }
             }

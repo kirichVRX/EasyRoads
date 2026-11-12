@@ -148,7 +148,27 @@ public final class RoadGraphSavedData extends SavedData {
                 moduleCurves = RoadModuleCurve.generateModuleCurves(curve, preset, null, null);
             }
 
-            RoadEdge edge = new RoadEdge(id, nodeAId, nodeBId, curve, profile, presetId, moduleCurves);
+            String curbPalette = edgeTag.contains("CurbPalette") ? edgeTag.getString("CurbPalette") : null;
+            String sidewalkPalette = edgeTag.contains("SidewalkPalette") ? edgeTag.getString("SidewalkPalette") : null;
+
+            RoadEdge edge = new RoadEdge(id, nodeAId, nodeBId, curve, profile, presetId, moduleCurves, curbPalette, sidewalkPalette);
+            if (edgeTag.contains("LampStyle")) edge.setLampStyle(edgeTag.getString("LampStyle"));
+            if (edgeTag.contains("LampSpacing")) edge.setLampSpacing(edgeTag.getInt("LampSpacing"));
+            if (edgeTag.contains("SidewalkDoubleLamps")) edge.setSidewalkDoubleLamps(edgeTag.getBoolean("SidewalkDoubleLamps"));
+            if (edgeTag.contains("LampPlacement")) edge.setLampPlacement(edgeTag.getString("LampPlacement"));
+            if (edgeTag.contains("GuardrailStyle")) edge.setGuardrailStyle(edgeTag.getString("GuardrailStyle"));
+            if (edgeTag.contains("NoiseWallEnabled")) edge.setNoiseWallEnabled(edgeTag.getBoolean("NoiseWallEnabled"));
+            if (edgeTag.contains("StackGuardrails")) edge.setStackGuardrails(edgeTag.getString("StackGuardrails"));
+            if (edgeTag.contains("StackGreenery")) edge.setStackGreenery(edgeTag.getString("StackGreenery"));
+            if (edgeTag.contains("TreeSpacing")) edge.setTreeSpacing(edgeTag.getInt("TreeSpacing"));
+            if (edgeTag.contains("BushSpacing")) edge.setBushSpacing(edgeTag.getInt("BushSpacing"));
+            if (edgeTag.contains("EmbankmentMode")) edge.setEmbankmentMode(edgeTag.getString("EmbankmentMode"));
+            if (edgeTag.contains("EmbankmentShape")) edge.setEmbankmentShape(edgeTag.getString("EmbankmentShape"));
+            if (edgeTag.contains("EmbankmentMaterial")) edge.setEmbankmentMaterial(edgeTag.getString("EmbankmentMaterial"));
+            if (edgeTag.contains("SlopeMode")) edge.setSlopeMode(edgeTag.getString("SlopeMode"));
+            if (edgeTag.contains("SlopeStyle")) edge.setSlopeStyle(edgeTag.getString("SlopeStyle"));
+            if (edgeTag.contains("SlopeMaterial")) edge.setSlopeMaterial(edgeTag.getString("SlopeMaterial"));
+            if (edgeTag.contains("TunnelShape")) edge.setTunnelShape(edgeTag.getString("TunnelShape"));
             graph.addEdge(edge);
         }
 
@@ -233,6 +253,63 @@ public final class RoadGraphSavedData extends SavedData {
             edgeTag.putUUID("NodeA", edge.getNodeAId());
             edgeTag.putUUID("NodeB", edge.getNodeBId());
             edgeTag.putString("PresetId", edge.getPresetId());
+            if (edge.getCurbPalette() != null && !edge.getCurbPalette().isBlank()) {
+                edgeTag.putString("CurbPalette", edge.getCurbPalette());
+            }
+            if (edge.getSidewalkPalette() != null && !edge.getSidewalkPalette().isBlank()) {
+                edgeTag.putString("SidewalkPalette", edge.getSidewalkPalette());
+            }
+            if (edge.getLampStyle() != null && !edge.getLampStyle().isBlank()) {
+                edgeTag.putString("LampStyle", edge.getLampStyle());
+            }
+            if (edge.getLampSpacing() > 0) {
+                edgeTag.putInt("LampSpacing", edge.getLampSpacing());
+            }
+            if (edge.getSidewalkDoubleLamps() != null) {
+                edgeTag.putBoolean("SidewalkDoubleLamps", edge.getSidewalkDoubleLamps());
+            }
+            if (edge.getLampPlacement() != null && !edge.getLampPlacement().isBlank()) {
+                edgeTag.putString("LampPlacement", edge.getLampPlacement());
+            }
+            if (edge.getGuardrailStyle() != null && !edge.getGuardrailStyle().isBlank()) {
+                edgeTag.putString("GuardrailStyle", edge.getGuardrailStyle());
+            }
+            if (edge.getNoiseWallEnabled() != null) {
+                edgeTag.putBoolean("NoiseWallEnabled", edge.getNoiseWallEnabled());
+            }
+            if (edge.getStackGuardrails() != null && !edge.getStackGuardrails().isBlank()) {
+                edgeTag.putString("StackGuardrails", edge.getStackGuardrails());
+            }
+            if (edge.getStackGreenery() != null && !edge.getStackGreenery().isBlank()) {
+                edgeTag.putString("StackGreenery", edge.getStackGreenery());
+            }
+            if (edge.getTreeSpacing() > 0) {
+                edgeTag.putInt("TreeSpacing", edge.getTreeSpacing());
+            }
+            if (edge.getBushSpacing() > 0) {
+                edgeTag.putInt("BushSpacing", edge.getBushSpacing());
+            }
+            if (edge.getEmbankmentMode() != null && !edge.getEmbankmentMode().isBlank()) {
+                edgeTag.putString("EmbankmentMode", edge.getEmbankmentMode());
+            }
+            if (edge.getEmbankmentShape() != null && !edge.getEmbankmentShape().isBlank()) {
+                edgeTag.putString("EmbankmentShape", edge.getEmbankmentShape());
+            }
+            if (edge.getEmbankmentMaterial() != null && !edge.getEmbankmentMaterial().isBlank()) {
+                edgeTag.putString("EmbankmentMaterial", edge.getEmbankmentMaterial());
+            }
+            if (edge.getSlopeMode() != null && !edge.getSlopeMode().isBlank()) {
+                edgeTag.putString("SlopeMode", edge.getSlopeMode());
+            }
+            if (edge.getSlopeStyle() != null && !edge.getSlopeStyle().isBlank()) {
+                edgeTag.putString("SlopeStyle", edge.getSlopeStyle());
+            }
+            if (edge.getSlopeMaterial() != null && !edge.getSlopeMaterial().isBlank()) {
+                edgeTag.putString("SlopeMaterial", edge.getSlopeMaterial());
+            }
+            if (edge.getTunnelShape() != null && !edge.getTunnelShape().isBlank()) {
+                edgeTag.putString("TunnelShape", edge.getTunnelShape());
+            }
 
             BezierCurve3D curve = edge.getCurve();
             writeVector3d(edgeTag, "P0", curve.getP0());

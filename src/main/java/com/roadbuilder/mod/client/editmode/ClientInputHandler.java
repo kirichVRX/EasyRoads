@@ -78,7 +78,9 @@ public final class ClientInputHandler {
         }
 
         if (key == GLFW.GLFW_KEY_TAB) {
-            EditModeManager.getInstance().togglePanel();
+            if (EditModeManager.EDIT_PANEL_ENABLED) {
+                EditModeManager.getInstance().togglePanel();
+            }
             return;
         }
 
@@ -93,9 +95,9 @@ public final class ClientInputHandler {
             EditModeManager.getInstance().setCurrentTool(panelTools[2]);
         } else if (key == GLFW.GLFW_KEY_4 && panelTools.length > 3) {
             EditModeManager.getInstance().setCurrentTool(panelTools[3]);
-        } else if (key == GLFW.GLFW_KEY_5) {
+        } else if (key == GLFW.GLFW_KEY_5 && EditModeManager.EDIT_PANEL_ENABLED) {
             EditModeManager.getInstance().setCurrentTool(EditTool.DELETE_EDGE);
-        } else if (key == GLFW.GLFW_KEY_6) {
+        } else if (key == GLFW.GLFW_KEY_6 && EditModeManager.EDIT_PANEL_ENABLED) {
             EditModeManager.getInstance().setCurrentTool(EditTool.MOVE_EXISTING_NODE);
         } else if (key == GLFW.GLFW_KEY_DELETE || key == GLFW.GLFW_KEY_BACKSPACE) {
             EditModeManager.getInstance().removePoint(EditModeManager.getInstance().getSelectedPointIndex());
@@ -208,7 +210,8 @@ public final class ClientInputHandler {
                 return;
             }
 
-            if (EditModeManager.getInstance().getActivePanel() == EditModeManager.EditorPanel.EDIT) {
+            if (EditModeManager.EDIT_PANEL_ENABLED
+                    && EditModeManager.getInstance().getActivePanel() == EditModeManager.EditorPanel.EDIT) {
                 NodeRaycaster.RaycastResult raycast = NodeRaycaster.raycast();
                 if (raycast.hoveredNode().isPresent()) {
                     mc.setScreen(new com.roadbuilder.mod.client.gui.NodeContextMenu(raycast.hoveredNode().get()));
@@ -242,6 +245,25 @@ public final class ClientInputHandler {
                 com.roadbuilder.mod.domain.profile.PresetManager.getInstance().getActivePreset();
         String activePresetId = activePreset.getId();
         String junctionStyle = activePreset.getJunctionStyle().name();
+        String curbPalette = activePreset.getCurbPalette().name();
+        String sidewalkPalette = activePreset.getSidewalkPalette().name();
+        String lampStyle = activePreset.getLampStyle().name();
+        int lampSpacing = activePreset.getLampSpacing();
+        boolean sidewalkDoubleLamps = activePreset.isSidewalkDoubleLamps();
+        String lampPlacement = activePreset.getLampPlacement().name();
+        String guardrailStyle = activePreset.getGuardrailStyle().name();
+        boolean noiseWallEnabled = activePreset.isNoiseWallEnabled();
+        String stackGuardrails = activePreset.serializeElementGuardrails();
+        String stackGreenery = activePreset.serializeElementGreenery();
+        int treeSpacing = activePreset.getTreeSpacing();
+        int bushSpacing = activePreset.getBushSpacing();
+        String embankmentMode = activePreset.getEmbankmentMode().name();
+        String embankmentShape = activePreset.getEmbankmentShape().name();
+        String embankmentMaterial = activePreset.getEmbankmentMaterial().name();
+        String slopeMode = activePreset.getSlopeMode().name();
+        String slopeStyle = activePreset.getSlopeStyle().name();
+        String slopeMaterial = activePreset.getSlopeMaterial().name();
+        String tunnelShape = activePreset.getTunnelShape().name();
         C2S_RequestBuildSegmentPayload payload = new C2S_RequestBuildSegmentPayload(
                 curve.getP0(),
                 curve.getP1(),
@@ -250,7 +272,26 @@ public final class ClientInputHandler {
                 Optional.ofNullable(startNodeId),
                 Optional.ofNullable(endNodeId),
                 activePresetId,
-                junctionStyle
+                junctionStyle,
+                curbPalette,
+                sidewalkPalette,
+                lampStyle,
+                lampSpacing,
+                sidewalkDoubleLamps,
+                lampPlacement,
+                guardrailStyle,
+                noiseWallEnabled,
+                stackGuardrails,
+                stackGreenery,
+                treeSpacing,
+                bushSpacing,
+                embankmentMode,
+                embankmentShape,
+                embankmentMaterial,
+                slopeMode,
+                slopeStyle,
+                slopeMaterial,
+                tunnelShape
         );
 
         PacketDistributor.sendToServer(payload);
